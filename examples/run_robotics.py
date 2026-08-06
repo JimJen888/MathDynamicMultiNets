@@ -101,7 +101,11 @@ def main() -> None:
     ap.add_argument("--no-dump", action="store_true", help="do not write any images")
     args = ap.parse_args()
 
-    n_train, epochs = (300, 10) if args.quick else (1500, 30)
+    # 1500x30 overfits: 0.72 on the holdout against 0.60 on fresh scenes, with
+    # every detour class near chance and only `direct` learned. The gap is the
+    # tell -- it is short of data, not of capacity -- and the rule then fails
+    # its own 0.85 verification threshold, so it may not enter a proof at all.
+    n_train, epochs = (300, 10) if args.quick else (6000, 80)
     machine = RenMachine(goal=GOAL, device=args.device)
 
     if args.llm:

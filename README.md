@@ -79,7 +79,7 @@ detects, the same convention as `DetourPredictor`. Pass `--device cpu` (or
 to match exactly: cuDNN kernels do not reproduce CPU kernels bit-for-bit even
 under the same seed, so the two devices are different random draws of the same
 procedure. Every run prints which device it chose. The speedup is real but
-modest — experiment 1 is 2m34s on a 4090 against ~8 min on CPU — because the
+modest — experiment 1 is 2m04s on a 4090 against ~8 min on CPU — because the
 nets are small and scene generation, glyph rendering and pixel quantization
 stay on the CPU in numpy. On `--quick` runs the two are indistinguishable.
 
@@ -159,8 +159,8 @@ that "looks fine".
 ## Results
 
 Default settings, single runs, no cherry-picking. Times are on one RTX 4090
-(2m04s for experiment 1, 4m01s for experiment 2); the same run on CPU takes
-~8 min and lands in the same place.
+(2m04s for experiment 1, 4m01s for experiment 2, 4m15s for appendix A); the
+same runs on CPU take a few times longer and land in the same place.
 
 **Experiment 1 — the distributive rule** (`run_multiplication.py`)
 
@@ -193,21 +193,6 @@ The `grow_ensemble` step usually **discards** its specialist here, and says so:
 in this run it mined 55 hard cases, trained on them, measured base 0.985 →
 ensemble 0.960 on 454 held-out examples, and left the base rule alone. §3's
 construction is treated as a claim to be checked, not an assumption.
-
-**Appendix A — sketch to escape direction** (`run_robotics.py`)
-
-`RuleNet(num_classes=7, num_slots=1)` — DetourNet with a smaller action set —
-on 1500 generated sketches, verified against the collision geometry on 290
-fresh ones:
-
-```
-top-1 0.593    top-3 0.800    'direct' 138/144
-```
-
-Top-3 is the operational number, for the reason `detourNet.evaluate` gives:
-the planner walks the ranked candidates and takes the first one a collision
-check clears. `direct` — the class whose failure drives the arm into an
-obstacle — is at 0.96.
 
 **Experiment 2 — interior angles of a triangle** (`run_geometry.py`)
 
@@ -253,6 +238,33 @@ from 8 rule applications to 1. The proof is replayed image by image into
 `renders/geometry/` (see below), which is the only way to check that the
 auxiliary line really did end up through the apex and parallel to the opposite
 edge.
+
+**Appendix A — sketch to escape direction** (`run_robotics.py`)
+
+`RuleNet(num_classes=7, num_slots=1)` — DetourNet with a smaller action set —
+on 6000 generated sketches, verified against the collision geometry on 290
+fresh ones:
+
+```
+top-1 0.683    top-3 0.883    'direct' 142/144
+```
+
+Top-3 is the operational number, for the reason `detourNet.evaluate` gives:
+the planner walks the ranked candidates and takes the first one a collision
+check clears. `direct` — the class whose failure drives the arm into an
+obstacle — is at **0.986**; the six detour classes are what the other 0.32
+is made of, and they sit between 0.36 and 0.50.
+
+This is the one experiment where training to convergence does **not** rescue
+the rule. At 1500 sketches it scored 0.72 on its holdout and 0.603 on fresh
+scenes; that 0.12 gap is a rule short of data, and 6000 sketches close it —
+0.696 and 0.683, within a point of each other, top-3 up from 0.800 to 0.883.
+What is left is not overfitting but the task: picking one of six detours from
+a sketch is genuinely harder than deciding whether the path is blocked at all,
+which is the part the net does learn. So the rule stays **below its own 0.85
+threshold and is never trusted**, and the machine will not let it into a
+proof. That is the intended behaviour of `verify_rule`, and it is the reason
+this appendix reports a ranking rather than a chain.
 
 ## Layout
 
