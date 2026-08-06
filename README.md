@@ -159,24 +159,27 @@ that "looks fine".
 ## Results
 
 Default settings, single runs, no cherry-picking. Times are on one RTX 4090
-(2m34s for experiment 1); the same run on CPU takes ~8 min and lands in the
-same place.
+(2m04s for experiment 1, 4m01s for experiment 2); the same run on CPU takes
+~8 min and lands in the same place.
 
 **Experiment 1 — the distributive rule** (`run_multiplication.py`)
 
 | rule | holdout | fresh data | trusted |
 |---|---|---|---|
-| `read_expression` (specific→abstract) | 0.983 | **0.987** | yes |
-| `distributive_learned` (specific→specific) | 0.953 | **0.961** | yes |
+| `read_expression` (specific→abstract) | 0.990 | **0.9867** (150 checks) | yes |
+| `distributive_learned` (specific→specific) | 0.983 | **0.9609** (230 checks) | yes |
 
 The learned rewrite was checked twice on the same fresh set: **0.9609** against
 the oracle, and **0.9609** against the independent chain
 `read_expression → decimal_split → distribute_symbolic → render`. Two routes
 that share no machinery agreeing to four digits is what verification is for.
 
-All four benchmark tasks solved, `J = 15816 bits`, including
-`'12*30' (drawn, unlabelled) → '360'` in two steps at confidence 0.980 —
-a chain that leaves the specific domain and comes back.
+All four benchmark tasks solved, `J = 15816 bits` over 11 rules and 6 rule
+applications, including `'12*30' (drawn, unlabelled) → '360'` in two steps at
+confidence **0.9803** — a chain that leaves the specific domain and comes back.
+Unlike the construction loop in experiment 2, nothing here is applied to its
+own output more than once, so the chain is two links long and the reader's
+0.9867 is most of what the confidence is made of.
 
 Then the objective does something worth noticing: the learned distributive rule
 is verified and trusted, and still reported **unused**. Going through the
@@ -187,8 +190,9 @@ not pay for itself. That is the conciseness objective doing its job, and it is
 left in the example rather than tuned away.
 
 The `grow_ensemble` step usually **discards** its specialist here, and says so:
-§3's construction is treated as a claim to be checked on held-out data, not an
-assumption.
+in this run it mined 55 hard cases, trained on them, measured base 0.985 →
+ensemble 0.960 on 454 held-out examples, and left the base rule alone. §3's
+construction is treated as a claim to be checked, not an assumption.
 
 **Appendix A — sketch to escape direction** (`run_robotics.py`)
 
@@ -223,17 +227,32 @@ PROVED: 'triangle0' => 'B1+A3+B2=180'   (8 steps, confidence 0.961)
   --substitute_equalities [abst->abst]-->  'B1+A3+B2=180'
 ```
 
-Confidence is the product along the chain, so the construction loop is the
-expensive part: the same two rules at 0.95 instead of ~1.00 turn this into a
-0.68 proof, and they also waste a rotation deciding a scene that sits on the
-parallel tolerance, which costs another factor. That is the conclusions'
-0.99999¹⁰⁰⁰ argument seen from the wrong end, and it is why the example trains
-the perception rules to convergence rather than to "verified above threshold".
+Confidence is the product along the chain, so the construction loop — not the
+reading step — is what the number is mostly made of, and a rule that is merely
+*above threshold* is not good enough to be applied six times. Train the same
+two rules to 0.95 and 0.98 instead (1200 examples, 30 epochs, which is what
+this example used to do) and the identical proof comes out at **0.68**: six
+links at 0.95 is 0.74 before the reader is even consulted, and a rule that
+cannot resolve the parallel tolerance spends a seventh rotation on a scene that
+was already in the proof configuration. That is the conclusions' 0.99999¹⁰⁰⁰
+argument seen from the wrong end, and it is why the example now trains to
+convergence rather than to "verified".
+
+There is a gap underneath that verification cannot see. `construct_aux_line`
+verified at 0.955 scores **0.676** on the states the construction loop actually
+visits, and carries only 57% of constructions through to the proof
+configuration. `verify_rule` measures it on freshly generated scenes; the loop
+feeds it its own output, which lands on the near-tolerance configurations the
+generator never emits. Trained to convergence those two numbers become 0.904
+and 87%. A specific→specific rule is applied to its own outputs, so a held-out
+set of *inputs* is the weaker of the two checks available, and the confidence
+of a long chain is the thing that notices.
+
 `keep_proof` then stores the whole thing as one rule, and the benchmark drops
-from 8 rule applications to 1. The proof is
-replayed image by image into `renders/geometry/` (see below), which is the only
-way to check that the auxiliary line really did end up through the apex and
-parallel to the opposite edge.
+from 8 rule applications to 1. The proof is replayed image by image into
+`renders/geometry/` (see below), which is the only way to check that the
+auxiliary line really did end up through the apex and parallel to the opposite
+edge.
 
 ## Layout
 
