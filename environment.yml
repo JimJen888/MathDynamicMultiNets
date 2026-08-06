@@ -1,0 +1,43 @@
+# Conda environment for dynamicMultiNet.
+#
+#     conda env create -f environment.yml
+#     conda activate dynamicmultinet
+#     python -m pytest tests/ -q
+#
+# Versions are pinned to the ones already proven on this machine (the pixi env
+# under RL_training/rl_training uses exactly this torch/CUDA pair), which also
+# means conda hard-links most of it out of the existing package cache instead
+# of downloading and writing several gigabytes again.
+#
+# CPU-only box? Drop the `pytorch-cuda` line and the `nvidia` channel; the code
+# detects the device and falls back to CPU on its own.
+#
+# NOTE for this particular machine: do not build this env here. Two reasons --
+# `conda env create` cannot reach repo.anaconda.com / conda-forge reliably (the
+# solve times out), and the disk is 97% full, so a second copy of torch is not
+# worth 7 GB. The pixi environment next door already has this exact torch/CUDA
+# pair; use ./run.sh, which points at it. This file is for other machines.
+
+name: dynamicmultinet
+
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+
+dependencies:
+  - python=3.10
+  - numpy>=1.21
+
+  # Learned mapping rules. Imported lazily -- the tapes, renderer, prior rules,
+  # proof search and the conciseness objective all run on numpy alone.
+  - pytorch=2.3.1
+  - pytorch-cuda=12.1     # matches the 12.4 driver on this box (12.1 runtime is fine)
+
+  - pytest>=7.0
+
+  - pip
+  - pip:
+      # The LLM controller. Optional: ScriptedController drives the identical
+      # tool table offline, which is what the examples use by default.
+      - anthropic>=0.40

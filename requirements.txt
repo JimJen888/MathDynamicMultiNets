@@ -1,0 +1,14 @@
+# Core: the tapes, renderer, symbolic rules, proof search, halting calibration
+# and the conciseness accounting need nothing but numpy.
+numpy>=1.21
+
+# Learned mapping rules (RuleNet). Imported lazily -- everything above works
+# without it, and tests skip the neural half if it is missing.
+torch>=2.0
+
+# The LLM controller. Optional: ScriptedController drives the identical tool
+# table offline, which is what the examples use by default.
+anthropic>=0.40
+
+# Tests
+pytest>=7.0

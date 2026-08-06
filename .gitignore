@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local tooling state, not part of the project
+.claude/settings.local.json
+
+# Saved rule libraries: the manifest reproduces every rule from its recipe,
+# so the weights are a cache rather than source (see rules.RuleLibrary.save).
+*.pt
