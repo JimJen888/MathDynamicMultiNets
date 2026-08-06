@@ -2,6 +2,9 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
+# Rendered tape cells written by the examples for eyeballing (--dump).
+renders/
+
 # Local tooling state, not part of the project
 .claude/settings.local.json
 

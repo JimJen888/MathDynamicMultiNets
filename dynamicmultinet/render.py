@@ -337,3 +337,42 @@ def save_png(img: np.ndarray, path: str) -> None:
            + chunk(b"IEND", b""))
     with open(path, "wb") as f:
         f.write(png)
+
+
+def _slug(text: str, limit: int = 40) -> str:
+    """Caption -> something safe to put in a filename."""
+    keep = [c if (c.isalnum() or c in "._-") else "_" for c in text.strip()]
+    return ("".join(keep).strip("_") or "cell")[:limit]
+
+
+def save_gallery(items, out_dir: str, prefix: str = "", reset: bool = False) -> int:
+    """Write a numbered run of tape cells to `out_dir`, for eyeballing.
+
+    `items` is an iterable of (caption, image) pairs. The caption goes into the
+    filename in slugged form AND verbatim into `index.txt` alongside it --
+    validation means reading "what the machine thinks this is" next to the
+    pixels, and a filename cannot carry a full prediction/truth pair without
+    becoming unreadable.
+
+    Appends to `index.txt` so several galleries can share one output directory;
+    pass `reset=True` on the first call of a run to drop the previous run's
+    index (the PNGs themselves are left alone -- they get overwritten).
+    """
+    from pathlib import Path
+
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    if reset:
+        (out / "index.txt").unlink(missing_ok=True)
+    lines, n = [], 0
+    for i, (caption, img) in enumerate(items):
+        if img is None:
+            continue
+        name = f"{prefix}{i:02d}_{_slug(caption)}.png"
+        save_png(img, str(out / name))
+        lines.append(f"{name}\t{caption}")
+        n += 1
+    if lines:
+        with open(out / "index.txt", "a") as f:
+            f.write("\n".join(lines) + "\n")
+    return n

@@ -35,11 +35,13 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 from dynamicmultinet import RenMachine, ScriptedController          # noqa: E402
 from dynamicmultinet.controller import LLMController                # noqa: E402
 from dynamicmultinet.oracles import ESCAPE_DIRECTIONS               # noqa: E402
+from dynamicmultinet.render import save_gallery                     # noqa: E402
 
 GOAL = (
     "Learn to choose an escape direction by looking at a sketch of the robot, "
@@ -93,7 +95,10 @@ def main() -> None:
     ap.add_argument("--llm", action="store_true")
     ap.add_argument("--device", default=None,
                     help="cuda when a GPU is present; pass cpu to pin it")
-    ap.add_argument("--dump", default="", help="write a few sketches here")
+    ap.add_argument("--dump", default="renders/robotics",
+                    help="directory the sketches are written to, so the rule's "
+                         "answers can be checked against what it was looking at")
+    ap.add_argument("--no-dump", action="store_true", help="do not write any images")
     args = ap.parse_args()
 
     n_train, epochs = (300, 10) if args.quick else (1500, 30)
@@ -148,14 +153,28 @@ def main() -> None:
     print("the same architecture with 19 classes and the full 0.05/0.40/0.75 x "
           "6-axis action set is DetourNet")
 
-    if args.dump:
-        from dynamicmultinet.render import save_png
-
+    if args.dump and not args.no_dump:
+        # The sketches the rule was actually looking at, captioned with what it
+        # answered and what the collision geometry says. Reading those two off
+        # the picture is the only way to tell a wrong answer from a scene whose
+        # obstacles make the "right" one debatable.
         out = Path(args.dump)
-        out.mkdir(parents=True, exist_ok=True)
-        for i, ex in enumerate(fresh.examples[:6]):
-            save_png(ex.inp.image, str(out / f"scene{i:02d}.png"))
-        print(f"wrote 6 sketches to {out}")
+        if not out.is_absolute():
+            out = ROOT / out
+
+        def scenes():
+            for ex in fresh.examples[:8]:
+                want = ex.out.text if ex.labeled else "?"
+                ranked = rule.rank_options(ex.inp, 3)
+                mark = ("unlabeled" if not ex.labeled
+                        else "ok" if ranked[0][0] == want else "WRONG")
+                shown = " ".join(f"{n}:{p:.2f}" for n, p in ranked)
+                yield f"{mark}_truth-{want}_pred-{ranked[0][0]}  [{shown}]", ex.inp.image
+
+        n = save_gallery(scenes(), str(out), prefix="scene", reset=True)
+        n += save_gallery(((c.text or "cell", c.image) for _, c in machine.specific),
+                          str(out), prefix="tape")
+        print(f"\nwrote {n} images to {out} (captions in {out / 'index.txt'})")
 
 
 if __name__ == "__main__":

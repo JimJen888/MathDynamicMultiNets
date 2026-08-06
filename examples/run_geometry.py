@@ -38,10 +38,12 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 from dynamicmultinet import RenMachine, ScriptedController          # noqa: E402
 from dynamicmultinet.controller import LLMController                # noqa: E402
+from dynamicmultinet.render import save_gallery                     # noqa: E402
 
 GOAL = (
     "Starting from a drawing of a triangle with an auxiliary line in the wrong "
@@ -116,10 +118,20 @@ def main() -> None:
     ap.add_argument("--llm", action="store_true")
     ap.add_argument("--device", default=None,
                     help="cuda when a GPU is present; pass cpu to pin it")
-    ap.add_argument("--dump", default="", help="write the construction sketches here")
+    ap.add_argument("--dump", default="renders/geometry",
+                    help="directory the construction sketches are written to, so "
+                         "the drawing the proof ran on can be checked by eye")
+    ap.add_argument("--no-dump", action="store_true", help="do not write any images")
     args = ap.parse_args()
 
-    n_train, epochs = (300, 10) if args.quick else (1200, 30)
+    # 1200x30 leaves both rules around 0.95, and 0.95 compounded over a
+    # seven-link construction is a 0.68 proof -- the chain is only ever as good
+    # as its weakest perception step raised to the power of how often the
+    # construction loop fires. Trained to convergence they verify at ~1.00 and
+    # ~0.99, the construction stops wasting a rotation on the tolerance
+    # boundary, and the same proof comes out above 0.95. It costs ~10 minutes
+    # on a GPU; --quick is still there for a 30-second smoke test.
+    n_train, epochs = (300, 10) if args.quick else (4000, 60)
     machine = RenMachine(goal=GOAL, device=args.device)
 
     if args.llm:
@@ -141,18 +153,56 @@ def main() -> None:
         print("  kept as the rule 'triangle_angle_sum' -- the machine will not "
               "search for it again")
 
-    if args.dump:
-        # Every intermediate drawing, so the construction can be looked at.
-        from dynamicmultinet.render import save_png
-
+    if args.dump and not args.no_dump:
         out = Path(args.dump)
-        out.mkdir(parents=True, exist_ok=True)
-        written = 0
-        for i, (_, cell) in enumerate(machine.specific):
-            if cell.image is not None:
-                save_png(cell.image, str(out / f"step{i:02d}_{cell.text[:40]}.png"))
-                written += 1
-        print(f"\nwrote {written} sketches to {out}")
+        if not out.is_absolute():
+            out = ROOT / out
+
+        # Every drawing on the tape, then the proof replayed on the one it
+        # started from. The search keeps only the TEXT of each step, and text
+        # is the one thing this experiment is not about: the construction is
+        # only convincing if the auxiliary line can be seen walking onto the
+        # apex and turning parallel, one image per step.
+        written = save_gallery(
+            ((cell.text or "cell", cell.image) for _, cell in machine.specific),
+            str(out), prefix="tape", reset=True)
+
+        def replay():
+            cell = machine.head("specific")
+            yield f"start_{cell.text or 'cell'}", cell.image
+            for st in proof.steps:
+                cell = machine.library.get(st.rule).apply(cell)
+                if cell is None:                 # only if a rule stopped applying
+                    break
+                yield f"{st.rule}_{st.after}", cell.image
+
+        if proof.found:
+            written += save_gallery(replay(), str(out), prefix="step")
+
+        # Held-out scenes captioned with what each rule answered and what the
+        # oracle wanted -- the verification numbers, made checkable by eye.
+        # `answer_text` because construct_aux_line answers with a drawing, and
+        # what it DECIDED lives in that cell's meta, not in its caption.
+        from dynamicmultinet.verify import answer_text, normalize
+
+        for ds_name, rule_name in (("geo_fresh", "construct_aux_line"),
+                                   ("facts_fresh", "read_angle_facts")):
+            if ds_name not in machine.datasets or rule_name not in machine.library:
+                continue
+            rule = machine.library.get(rule_name)
+
+            def cases(ds=machine.datasets[ds_name], rule=rule):
+                for ex in ds.examples[:8]:
+                    want = answer_text(ex.out) if ex.labeled else "?"
+                    got = answer_text(rule.apply(ex.inp)) or "(no answer)"
+                    mark = ("unlabeled" if not ex.labeled
+                            else "ok" if normalize(got) == normalize(want)
+                            else "WRONG")
+                    yield f"{mark}_want-{want}_got-{got}", ex.inp.image
+
+            written += save_gallery(cases(), str(out), prefix=f"{rule_name}_")
+
+        print(f"\nwrote {written} images to {out} (captions in {out / 'index.txt'})")
 
     print("\n--- library ---")
     print(machine.library.table())

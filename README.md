@@ -49,6 +49,24 @@ python examples/run_robotics.py          # appendix A
 #   add --quick for a 30 s smoke run, --llm to let Claude drive
 ```
 
+**Rendered images.** Every example ends by writing what it drew to
+`renders/<experiment>/`, because an accuracy number over pictures is not
+checkable and the pictures are: held-out inputs captioned with what the rule
+answered and what the oracle wanted, the drawings a specific→specific rule
+produced, the tape cells, and — in the geometry run — the proof replayed one
+image per step. Filenames are truncated, so the full captions live next to them
+in `index.txt`:
+
+```
+renders/geometry/index.txt
+  step03_construct_aux_line_triangle0_move_up_mo.png   construct_aux_line_triangle0|move_up|move_up|rotate_cw
+  read_angle_facts_02_WRONG_want-no_facts_got-A1.png   WRONG_want-no_facts_got-A1=B1,A2=B2,A1+A3+A2=180
+```
+
+Pass `--dump DIR` to put them somewhere else, `--no-dump` to skip them. A
+`--quick` run writes the same images from badly trained rules, which is the
+fastest way to see what the experiment is doing before paying for a real run.
+
 `requirements.txt` is the pip equivalent if you already have an environment.
 Only numpy is strictly required — the tapes, renderer, prior rules, proof
 search and the objective all run without torch, and declaring a learned rule
@@ -193,22 +211,29 @@ Two learned rules of different kinds: `construct_aux_line` looks at the drawing
 and *edits* it (output is another drawing, so it can be applied again — the
 construction loop is proof search inside the specific domain), and
 `read_angle_facts` says what the finished figure licenses. Verified on fresh
-scenes at 0.94 and 0.97; from a drawing whose auxiliary line starts off the
+scenes at 1.00 and 0.99; from a drawing whose auxiliary line starts off the
 apex and at the wrong angle:
 
 ```
-PROVED: 'triangle0' => 'B1+A3+B2=180'   (9 steps, confidence 0.629)
+PROVED: 'triangle0' => 'B1+A3+B2=180'   (8 steps, confidence 0.961)
   --construct_aux_line [spec->spec]-->  triangle0|move_up
   --construct_aux_line [spec->spec]-->  triangle0|move_up|move_up
-  --construct_aux_line [spec->spec]-->  ...|rotate_cw          (x5)
+  --construct_aux_line [spec->spec]-->  ...|rotate_cw          (x4)
   --read_angle_facts  [spec->abst]-->  'A1=B1,A2=B2,A1+A3+A2=180'
   --substitute_equalities [abst->abst]-->  'B1+A3+B2=180'
 ```
 
-Nine links at ~0.95 each is a 0.63 proof — the conclusions' 0.99999¹⁰⁰⁰
-argument, seen from the wrong end. `keep_proof` then stores the whole thing as
-one rule, and the benchmark drops from 9 rule applications to 1. Run with
-`--dump DIR` to write every intermediate sketch.
+Confidence is the product along the chain, so the construction loop is the
+expensive part: the same two rules at 0.95 instead of ~1.00 turn this into a
+0.68 proof, and they also waste a rotation deciding a scene that sits on the
+parallel tolerance, which costs another factor. That is the conclusions'
+0.99999¹⁰⁰⁰ argument seen from the wrong end, and it is why the example trains
+the perception rules to convergence rather than to "verified above threshold".
+`keep_proof` then stores the whole thing as one rule, and the benchmark drops
+from 8 rule applications to 1. The proof is
+replayed image by image into `renders/geometry/` (see below), which is the only
+way to check that the auxiliary line really did end up through the apex and
+parallel to the opposite edge.
 
 ## Layout
 

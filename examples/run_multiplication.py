@@ -35,10 +35,12 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 from dynamicmultinet import RenMachine, ScriptedController          # noqa: E402
 from dynamicmultinet.controller import LLMController                # noqa: E402
+from dynamicmultinet.render import save_gallery                     # noqa: E402
 
 GOAL = (
     "Learn the distributive rule of multiplication from experiments you generate "
@@ -140,6 +142,10 @@ def main() -> None:
     ap.add_argument("--device", default=None,
                     help="cuda when a GPU is present; pass cpu to pin it")
     ap.add_argument("--save", default="", help="directory to save the library to")
+    ap.add_argument("--dump", default="renders/multiplication",
+                    help="directory the drawn expressions are written to, so what "
+                         "the nets read and drew can be checked by eye")
+    ap.add_argument("--no-dump", action="store_true", help="do not write any images")
     args = ap.parse_args()
 
     n_train, epochs = (400, 15) if args.quick else (2000, 60)
@@ -176,6 +182,47 @@ def main() -> None:
               "  proof may use it and everything reads as unused. That is the\n"
               "  expected outcome of --quick: 400 examples and 15 epochs is not\n"
               "  enough to learn to read. Run without --quick for the real result.")
+
+    if args.dump and not args.no_dump:
+        # Both learned rules here are about pixels: one reads a drawing, the
+        # other rewrites one. Accuracy numbers say how often they were right;
+        # these images say what they were looking at when they were not.
+        from dynamicmultinet.verify import answer_text, normalize
+
+        out = Path(args.dump)
+        if not out.is_absolute():
+            out = ROOT / out
+        written, first = 0, True
+
+        for ds_name, rule_name in (("read_fresh", "read_expression"),
+                                   ("mul_fresh", "distributive_learned"),
+                                   ("mul_fresh", "distributive_learned_ens")):
+            if ds_name not in machine.datasets or rule_name not in machine.library:
+                continue
+            rule = machine.library.get(rule_name)
+
+            def cases(ds=machine.datasets[ds_name], rule=rule):
+                for ex in ds.examples[:8]:
+                    want = answer_text(ex.out) if ex.labeled else "?"
+                    got = rule.apply(ex.inp)
+                    text = answer_text(got) or "(no answer)"
+                    mark = ("unlabeled" if not ex.labeled
+                            else "ok" if normalize(text) == normalize(want)
+                            else "WRONG")
+                    yield f"{mark}_in-{ex.inp.text}_want-{want}_got-{text}", ex.inp.image
+                    # A specific -> specific rule answers in pixels; save the
+                    # drawing it produced, not just the string behind it.
+                    if got is not None and got.image is not None:
+                        yield f"{mark}_drawn-{text}", got.image
+
+            written += save_gallery(cases(), str(out), prefix=f"{rule_name}_",
+                                    reset=first)
+            first = False
+
+        # The proof tape: every expression the chains wrote, as drawn.
+        written += save_gallery(((c.text or "cell", c.image) for _, c in machine.specific),
+                                str(out), prefix="tape", reset=first)
+        print(f"\nwrote {written} images to {out} (captions in {out / 'index.txt'})")
 
     if args.save:
         print("\nsaved:", machine.save(args.save))
