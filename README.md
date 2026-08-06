@@ -55,17 +55,6 @@ search and the objective all run without torch, and declaring a learned rule
 without it fails immediately with an install hint rather than several tool
 calls later.
 
-**On the development machine, skip the conda env and use `./run.sh`**, which
-forwards to the pixi interpreter under `RL_training/rl_training` — it already
-has torch 2.3.1 + cu121 against the RTX 4090, and that disk has no room for a
-second copy:
-
-```bash
-./run.sh -m pytest tests/ -q
-./run.sh examples/run_geometry.py
-DMN_PYTHON=/path/to/python ./run.sh ...   # any other interpreter with torch
-```
-
 **Device.** Learned rules run on the GPU when there is one — `device=None`
 detects, the same convention as `DetourPredictor`. Pass `--device cpu` (or
 `RenMachine(device="cpu")`) to pin it, which is worth doing when two runs have
