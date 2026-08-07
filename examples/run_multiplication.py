@@ -38,9 +38,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from dynamicmultinet import RenMachine, ScriptedController          # noqa: E402
-from dynamicmultinet.controller import LLMController                # noqa: E402
-from dynamicmultinet.render import save_gallery                     # noqa: E402
+from dynamicmultinets import RenMachine, ScriptedController          # noqa: E402
+from dynamicmultinets.controller import LLMController                # noqa: E402
+from dynamicmultinets.render import save_gallery                     # noqa: E402
 
 GOAL = (
     "Learn the distributive rule of multiplication from experiments you generate "
@@ -197,7 +197,7 @@ def main() -> None:
         # Both learned rules here are about pixels: one reads a drawing, the
         # other rewrites one. Accuracy numbers say how often they were right;
         # these images say what they were looking at when they were not.
-        from dynamicmultinet.verify import answer_text, normalize
+        from dynamicmultinets.verify import answer_text, normalize
 
         out = Path(args.dump)
         if not out.is_absolute():

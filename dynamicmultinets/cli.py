@@ -1,19 +1,19 @@
 """
 Command line entry point.
 
-    python -m dynamicmultinet.cli tools
+    python -m dynamicmultinets.cli tools
         Print the controller's instruction set -- every operation the machine
         can perform, with its parameters. Read this before writing a goal.
 
-    python -m dynamicmultinet.cli catalogue
+    python -m dynamicmultinets.cli catalogue
         Print the generators and oracles a controller may choose from.
 
-    python -m dynamicmultinet.cli run --goal "..." [--llm]
+    python -m dynamicmultinets.cli run --goal "..." [--llm]
         Start a machine and hand it a goal. With --llm, Claude decides what to
         do next; without it, the run is a no-op scaffold (there is no default
         plan for an arbitrary goal) and you should use the examples instead.
 
-    python -m dynamicmultinet.cli inspect --library DIR
+    python -m dynamicmultinets.cli inspect --library DIR
         Load a saved library and print it, priced.
 """
 
@@ -65,7 +65,7 @@ def cmd_inspect(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(prog="dynamicmultinet", description=__doc__,
+    ap = argparse.ArgumentParser(prog="dynamicmultinets", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--device", default=None,
                     help="cuda when a GPU is present; pass cpu to pin it")

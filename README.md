@@ -89,9 +89,9 @@ a different program. With `--llm` (needs `ANTHROPIC_API_KEY` or an
 `ant auth login` profile) Claude decides what to do next instead.
 
 ```bash
-python -m dynamicmultinet.cli tools       # the controller's instruction set
-python -m dynamicmultinet.cli catalogue   # generators and oracles it may pick
-python -m dynamicmultinet.cli run --goal "..." --llm
+python -m dynamicmultinets.cli tools       # the controller's instruction set
+python -m dynamicmultinets.cli catalogue   # generators and oracles it may pick
+python -m dynamicmultinets.cli run --goal "..." --llm
 ```
 
 ## The objective
@@ -119,7 +119,7 @@ them behaviours the paper describes:
 ## What the machine can do
 
 Every operation is a tool the controller picks by name; the LLM never writes or
-executes code. `python -m dynamicmultinet.cli tools` prints the full list.
+executes code. `python -m dynamicmultinets.cli tools` prints the full list.
 
 | | |
 |---|---|
@@ -315,7 +315,7 @@ this appendix reports a ranking rather than a chain.
 ## Layout
 
 ```
-dynamicmultinet/
+dynamicmultinets/
   tapes.py       the two tapes, their alphabets, and the head operations
   render.py      abstract → pixels: the built-in write function (no font files,
                  no image library — exact palette colours, byte-reproducible)

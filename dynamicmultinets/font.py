@@ -11,7 +11,7 @@ exactly-known pixels keep that loop honest and reproducible.
 
 Encoding: one glyph per dict entry, seven comma-separated hex rows, top to
 bottom. Each row is 5 bits, bit 4 = leftmost column. Verify any glyph with
-`python -m dynamicmultinet.font 8`.
+`python -m dynamicmultinets.font 8`.
 
 Characters with no entry fall back to `hash_glyph`, a deterministic 5x7 pattern
 derived from the character. That is not a cop-out: labels like a Greek angle

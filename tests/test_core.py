@@ -5,7 +5,7 @@ Split in two: everything above `torch` runs with numpy alone (the tapes, the
 renderer, the symbolic rules, proof search, the halting calibration, the
 conciseness accounting), and the learned-rule tests are skipped when torch is
 absent. That split is the same one the package makes internally, so these tests
-also check that importing dynamicmultinet does not drag in torch.
+also check that importing dynamicmultinets does not drag in torch.
 
     pytest tests/            # or: python tests/test_core.py
 """
@@ -20,15 +20,15 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from dynamicmultinet import (ABSTRACT, SPECIFIC, Content, RenMachine,  # noqa: E402
+from dynamicmultinets import (ABSTRACT, SPECIFIC, Content, RenMachine,  # noqa: E402
                              RuleLibrary, ScriptedController, Task,
                              library_report, search)
-from dynamicmultinet.codec import ChoiceCodec, TextSlotCodec  # noqa: E402
-from dynamicmultinet.halting import (MAX_SAMPLES, calibrate,  # noqa: E402
+from dynamicmultinets.codec import ChoiceCodec, TextSlotCodec  # noqa: E402
+from dynamicmultinets.halting import (MAX_SAMPLES, calibrate,  # noqa: E402
                                      effective_lambda, sample_size)
-from dynamicmultinet.palette import PALETTE, rgb_to_class_index  # noqa: E402
-from dynamicmultinet.prior import eval_int_expression  # noqa: E402
-from dynamicmultinet.render import render_text, split_views  # noqa: E402
+from dynamicmultinets.palette import PALETTE, rgb_to_class_index  # noqa: E402
+from dynamicmultinets.prior import eval_int_expression  # noqa: E402
+from dynamicmultinets.render import render_text, split_views  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -102,8 +102,8 @@ def test_transcribe_declines_an_observed_cell():
 def test_primitives_sees_through_a_composite():
     """A chain hides its members, so comparing top-level names would call a
     reference independent of a rule it actually runs."""
-    from dynamicmultinet.rules import CompositeRule
-    from dynamicmultinet.verify import primitives
+    from dynamicmultinets.rules import CompositeRule
+    from dynamicmultinets.verify import primitives
 
     m = RenMachine()
     chain = CompositeRule("ref", [m.library.get("decimal_split"),
@@ -114,7 +114,7 @@ def test_primitives_sees_through_a_composite():
 def test_verification_against_a_reference_that_runs_the_rule_is_refused():
     """The one failure mode that produces a perfect score: a reference which
     invokes the rule under test agrees with it for free."""
-    from dynamicmultinet.verify import verify_against_rules
+    from dynamicmultinets.verify import verify_against_rules
 
     m = RenMachine()
     m.generate_data("mul_pairs", 20, seed=3, name="d", a_digits=2, b_digits=2,
@@ -129,7 +129,7 @@ def test_verification_against_a_reference_that_runs_the_rule_is_refused():
 def test_collision_probability_separates_wide_from_narrow_answers():
     """Agreement is only worth something when the routes could have differed.
     Two unrelated rules choosing one of two actions agree half the time."""
-    from dynamicmultinet.verify import collision_probability
+    from dynamicmultinets.verify import collision_probability
 
     assert collision_probability([f"{i}0*55+{i}*55" for i in range(1, 90)]) < 0.01
     assert collision_probability(["a", "b"] * 45) > 0.4
@@ -139,8 +139,8 @@ def test_collision_probability_separates_wide_from_narrow_answers():
 def test_a_shared_training_oracle_defeats_independence():
     """Different weights are not independence. Two nets taught by the same
     oracle inherit its mistakes and can agree while both are wrong."""
-    from dynamicmultinet.rules import PythonRule, Recipe
-    from dynamicmultinet.verify import independence
+    from dynamicmultinets.rules import PythonRule, Recipe
+    from dynamicmultinets.verify import independence
 
     def make(name, oracle):
         r = PythonRule(name, lambda c: c, SPECIFIC, ABSTRACT, source=name)
@@ -165,8 +165,8 @@ def test_the_construction_policy_agrees_with_the_moves_it_can_make():
     against the size of a rotation, so the two numbers must be the same ones
     `SceneActionCodec` actually applies. If they drift, the loop stops where
     nothing was trained -- which is what left `triangle_180` unproved."""
-    from dynamicmultinet.codec import SceneActionCodec
-    from dynamicmultinet.oracles import _ANGLE_STEP, _ANGLE_TOL, _STEP
+    from dynamicmultinets.codec import SceneActionCodec
+    from dynamicmultinets.oracles import _ANGLE_STEP, _ANGLE_TOL, _STEP
 
     codec = SceneActionCodec()
     assert (_STEP, _ANGLE_STEP) == (codec.step, codec.angle_step)
@@ -179,8 +179,8 @@ def test_a_finished_construction_is_one_the_reader_is_trained_on():
     """The scenes the generator calls solved must lie where the loop stops.
     They were exactly zero while the loop stopped anywhere within tolerance,
     so every finished construction was off-distribution."""
-    from dynamicmultinet.generators import generate
-    from dynamicmultinet.oracles import _ANGLE_STEP, _OFFSET_TOL, _geometry_state
+    from dynamicmultinets.generators import generate
+    from dynamicmultinets.oracles import _ANGLE_STEP, _OFFSET_TOL, _geometry_state
 
     es = generate("triangle_scenes", 400, seed=17, solved_fraction=1.0)
     for ex in es.examples:
@@ -197,7 +197,7 @@ def test_an_iterated_rule_keeps_the_best_cell_not_the_last():
     """The point of iterating inside a rule: a wrong step becomes one more
     candidate instead of the end of the proof, so the loop may run past the
     good cell as long as the judge picks it back out."""
-    from dynamicmultinet.rules import IteratedRule, PythonRule
+    from dynamicmultinets.rules import IteratedRule, PythonRule
 
     step = PythonRule("grow", lambda c: Content.specific_text(c.text + "x"),
                       SPECIFIC, SPECIFIC, source="grow")
@@ -214,7 +214,7 @@ def test_an_iterated_rule_keeps_the_best_cell_not_the_last():
 def test_an_iterated_rule_refuses_a_step_that_leaves_its_domain():
     """Only a rule that stays put can be run to a fixed point, and a judge has
     to read what the step writes."""
-    from dynamicmultinet.rules import IteratedRule, PythonRule
+    from dynamicmultinets.rules import IteratedRule, PythonRule
 
     crossing = PythonRule("read", lambda c: Content.abstract(c.text),
                           SPECIFIC, ABSTRACT, source="read")
@@ -248,8 +248,8 @@ def test_a_rule_that_writes_a_conclusion_never_offers_its_runner_up():
     expanding its second choice would let a proof assert the very fact the
     rule's own perception rejected."""
     pytest.importorskip("torch")
-    from dynamicmultinet.codec import ChoiceCodec, SceneActionCodec
-    from dynamicmultinet.rules import NeuralRule
+    from dynamicmultinets.codec import ChoiceCodec, SceneActionCodec
+    from dynamicmultinets.rules import NeuralRule
 
     proposes = NeuralRule("construct", SceneActionCodec(), SPECIFIC)
     asserts = NeuralRule("read_facts", ChoiceCodec(["a=b", "no_facts"]), SPECIFIC)
@@ -398,7 +398,7 @@ needs_torch = pytest.mark.skipif(not _torch_available(), reason="torch not insta
 def test_rulenet_shapes_and_detournet_equivalence():
     import torch
 
-    from dynamicmultinet.nets import RuleNet
+    from dynamicmultinets.nets import RuleNet
 
     single = RuleNet(num_classes=19, num_slots=1)
     a = torch.randint(0, 256, (2, 3, 64, 192), dtype=torch.float32)
@@ -414,7 +414,7 @@ def test_rulenet_shapes_and_detournet_equivalence():
 def test_quantizers_agree_between_numpy_and_torch():
     import torch
 
-    from dynamicmultinet.nets import rgb_to_class_channels
+    from dynamicmultinets.nets import rgb_to_class_channels
 
     view = split_views(render_text("12*30+4"))[0]
     want = rgb_to_class_index(view)
@@ -504,7 +504,7 @@ def test_simplify_never_trades_a_trusted_rule_for_an_untrusted_one():
     """`transcribe_unsafe` copies the caption, so on cells the machine drew it
     agrees with a real reader everywhere and costs less. Dropping the reader in
     its favour would delete the only rule that can read an OBSERVED cell."""
-    from dynamicmultinet.rules import PythonRule
+    from dynamicmultinets.rules import PythonRule
 
     m = RenMachine()
     reader = PythonRule("reader", lambda c: Content.abstract(c.text),
@@ -520,7 +520,7 @@ def test_simplify_never_trades_a_trusted_rule_for_an_untrusted_one():
 def test_simplify_leaves_a_working_library_when_a_drop_would_break_a_task():
     """One bad drop must not cascade: with the dropped rule gone every other
     rule stops being used, and a single pass would empty the library."""
-    from dynamicmultinet.rules import PythonRule
+    from dynamicmultinets.rules import PythonRule
 
     m = RenMachine()
     m.library.add(PythonRule("reader", lambda c: Content.abstract(c.text),

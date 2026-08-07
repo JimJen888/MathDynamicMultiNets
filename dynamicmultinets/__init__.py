@@ -13,7 +13,7 @@ robotic loop of Appendix A.
 
 Quick start:
 
-    from dynamicmultinet import RenMachine, ScriptedController
+    from dynamicmultinets import RenMachine, ScriptedController
 
     m = RenMachine(goal="learn the distributive rule and use it")
     m.write("abstract", "12*30")

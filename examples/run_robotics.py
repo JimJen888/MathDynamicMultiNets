@@ -38,10 +38,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from dynamicmultinet import RenMachine, ScriptedController          # noqa: E402
-from dynamicmultinet.controller import LLMController                # noqa: E402
-from dynamicmultinet.oracles import ESCAPE_DIRECTIONS               # noqa: E402
-from dynamicmultinet.render import save_gallery                     # noqa: E402
+from dynamicmultinets import RenMachine, ScriptedController          # noqa: E402
+from dynamicmultinets.controller import LLMController                # noqa: E402
+from dynamicmultinets.oracles import ESCAPE_DIRECTIONS               # noqa: E402
+from dynamicmultinets.render import save_gallery                     # noqa: E402
 
 GOAL = (
     "Learn to choose an escape direction by looking at a sketch of the robot, "
@@ -120,7 +120,7 @@ def main() -> None:
     # DetourNet.rank gives the trial loop. The collision check vets whatever
     # this proposes, so "the right answer is in the top 3" is the operational
     # criterion -- top-1 alone understates a rule whose runner-up was fine.
-    from dynamicmultinet.verify import topk_report
+    from dynamicmultinets.verify import topk_report
 
     rule = machine.library.get("sketch_to_direction")
     fresh = machine.datasets["scenes_fresh"]

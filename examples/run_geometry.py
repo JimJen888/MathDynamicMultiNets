@@ -41,9 +41,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from dynamicmultinet import RenMachine, ScriptedController          # noqa: E402
-from dynamicmultinet.controller import LLMController                # noqa: E402
-from dynamicmultinet.render import save_gallery                     # noqa: E402
+from dynamicmultinets import RenMachine, ScriptedController          # noqa: E402
+from dynamicmultinets.controller import LLMController                # noqa: E402
+from dynamicmultinets.render import save_gallery                     # noqa: E402
 
 GOAL = (
     "Starting from a drawing of a triangle with an auxiliary line in the wrong "
@@ -197,7 +197,7 @@ def main() -> None:
         # oracle wanted -- the verification numbers, made checkable by eye.
         # `answer_text` because construct_aux_line answers with a drawing, and
         # what it DECIDED lives in that cell's meta, not in its caption.
-        from dynamicmultinet.verify import answer_text, normalize
+        from dynamicmultinets.verify import answer_text, normalize
 
         for ds_name, rule_name in (("geo_fresh", "construct_aux_line"),
                                    ("facts_fresh", "read_angle_facts")):
