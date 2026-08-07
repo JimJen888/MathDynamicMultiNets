@@ -160,6 +160,39 @@ def test_a_shared_training_oracle_defeats_independence():
     assert other.why_not() == ""
 
 
+def test_the_construction_policy_agrees_with_the_moves_it_can_make():
+    """`next_construction_step` decides when to stop by comparing the error
+    against the size of a rotation, so the two numbers must be the same ones
+    `SceneActionCodec` actually applies. If they drift, the loop stops where
+    nothing was trained -- which is what left `triangle_180` unproved."""
+    from dynamicmultinet.codec import SceneActionCodec
+    from dynamicmultinet.oracles import _ANGLE_STEP, _ANGLE_TOL, _STEP
+
+    codec = SceneActionCodec()
+    assert (_STEP, _ANGLE_STEP) == (codec.step, codec.angle_step)
+    # The construction must halt strictly inside what the reader accepts,
+    # leaving a margin rather than finishing on the boundary.
+    assert _ANGLE_STEP / 2.0 < _ANGLE_TOL
+
+
+def test_a_finished_construction_is_one_the_reader_is_trained_on():
+    """The scenes the generator calls solved must lie where the loop stops.
+    They were exactly zero while the loop stopped anywhere within tolerance,
+    so every finished construction was off-distribution."""
+    from dynamicmultinet.generators import generate
+    from dynamicmultinet.oracles import _ANGLE_STEP, _OFFSET_TOL, _geometry_state
+
+    es = generate("triangle_scenes", 400, seed=17, solved_fraction=1.0)
+    for ex in es.examples:
+        sc = ex.inp.meta["scene"]
+        through, parallel, err = _geometry_state(sc)
+        assert through and parallel                      # genuinely solved
+        assert abs(sc["line_offset"]) <= _OFFSET_TOL
+        assert abs(err) <= _ANGLE_STEP / 2.0             # where the loop stops
+    offsets = {round(ex.inp.meta["scene"]["line_offset"], 3) for ex in es.examples}
+    assert len(offsets) > 50, "solved scenes must vary, not sit on one value"
+
+
 def test_an_iterated_rule_keeps_the_best_cell_not_the_last():
     """The point of iterating inside a rule: a wrong step becomes one more
     candidate instead of the end of the proof, so the loop may run past the

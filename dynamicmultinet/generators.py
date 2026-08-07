@@ -27,6 +27,10 @@ from typing import Any, Callable
 import numpy as np
 
 from .dataset import Example, ExampleSet
+# The geometry decision boundary and step sizes, imported rather than restated:
+# a generator that disagrees with the oracle about where a construction stops
+# trains rules on configurations nobody scores them on.
+from .oracles import _ANGLE_STEP, _OFFSET_TOL
 from .tapes import Content
 
 GeneratorFn = Callable[..., "list[Example]"]
@@ -205,7 +209,24 @@ def _triangle_scenes(n: int, rng: np.random.Generator,
         # perfect accuracy and means nothing.
         solved = bool(rng.random() < solved_fraction)
         if solved:
-            offset, angle = 0.0, base_angle
+            # Where the CONSTRUCTION stops, not the idealised configuration.
+            # The loop moves in steps of 0.12 and rotates in steps of 0.15, and
+            # `next_construction_step` stops it once another move would not get
+            # closer -- so it finishes somewhere in |offset| <= 0.06 and
+            # |err| <= 0.075, essentially never on zero. Drawing only the exact
+            # configuration produced a reader measured at 1.000 on an exactly
+            # parallel line and 0.525 on the one the construction actually
+            # makes: a rule that verifies at 0.995 and then cannot recognise a
+            # finished proof, which is what left `triangle_180` unproved.
+            #
+            # These bounds stop short of the 0.12 the reader is scored against,
+            # and unsolved scenes below start at 0.12, so no two drawings in
+            # this set are visually alike with opposite labels. Filling the
+            # whole tolerance band instead does restore the proof, but triples
+            # the rate of proofs licensed on unfinished constructions.
+            offset = float(rng.uniform(-_OFFSET_TOL, _OFFSET_TOL))
+            angle = base_angle + float(rng.uniform(-_ANGLE_STEP / 2.0,
+                                                   _ANGLE_STEP / 2.0))
         else:
             # Below the apex (negative), so the corrective action is "up", as
             # in Figure 3. Half the unsolved scenes already pass through the

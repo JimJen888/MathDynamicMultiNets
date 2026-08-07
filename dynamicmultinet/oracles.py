@@ -202,6 +202,11 @@ ANGLE_FACTS = ("A1=B1,A2=B2,A1+A3+A2=180", "no_facts")
 
 _OFFSET_TOL, _ANGLE_TOL = 0.06, 0.12
 
+# Must match SceneActionCodec's defaults -- these are the sizes of the moves the
+# construction actually makes, and the policy below stops by comparing against
+# them. A test pins the two together.
+_STEP, _ANGLE_STEP = 0.12, 0.15
+
 
 def _geometry_state(scene: dict) -> tuple[bool, bool, float]:
     """(passes through the apex, parallel to the base, signed angle error)."""
@@ -222,7 +227,17 @@ def _next_construction_step(ex: Example) -> Content | None:
     through, parallel, err = _geometry_state(scene)
     if not through:
         step = "move_up"
-    elif parallel:
+    elif abs(err) <= _ANGLE_STEP / 2.0:
+        # Stop when another rotation would not get CLOSER, not the instant the
+        # tolerance is satisfied. The two differ because the step (0.15) is
+        # larger than the tolerance (0.12): a construction that halts as soon
+        # as it is inside can finish at 0.102 when one more turn would reach
+        # -0.048. Nothing downstream is trained on 0.102 -- the generator only
+        # ever draws the exact configuration -- and the reader is measured at
+        # 1.000 on an exactly parallel line against 0.525 on that one, so the
+        # loop was reliably finishing in the one place its own reader could
+        # not recognise. Stopping at the nearest reachable point instead of
+        # the first acceptable one costs at most one extra rotation.
         step = "done"
     else:
         step = "rotate_cw" if err > 0 else "rotate_ccw"
