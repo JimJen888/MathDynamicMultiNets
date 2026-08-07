@@ -178,6 +178,19 @@ same runs on CPU take a few times longer and land in the same place.
 
 **Experiment 1 — the distributive rule** (`run_multiplication.py`)
 
+![Experiment 1: the final library and the conciseness objective](docs/experiment1.png)
+
+```
+--- objective ---
+library: 11 rules, 9816 bits
+benchmark: 4/4 solved, 6 rule applications
+objective J = 15816 bits
+  read_screen:      ok 1 steps via read_expression
+  rewrite:          ok 2 steps via decimal_split, distribute_symbolic
+  screen_to_value:  ok 2 steps via read_expression, eval_arith
+  value:            ok 1 steps via eval_arith
+```
+
 | rule | holdout | fresh data | trusted |
 |---|---|---|---|
 | `read_expression` (specific→abstract) | 0.990 | **0.9867** (150 checks) | yes |
@@ -210,45 +223,64 @@ construction is treated as a claim to be checked, not an assumption.
 
 **Experiment 2 — interior angles of a triangle** (`run_geometry.py`)
 
+![Experiment 2: the final library after the proof is kept as a rule](docs/experiment2.png)
+
+```
+--- objective ---
+library: 13 rules, 10736 bits
+benchmark: 1/1 solved, 1 rule applications
+objective J = 11736 bits
+  triangle_180: ok 1 steps via triangle_angle_sum
+```
+
 Two learned rules of different kinds: `construct_aux_line` looks at the drawing
 and *edits* it (output is another drawing, so it can be applied again — the
 construction loop is proof search inside the specific domain), and
-`read_angle_facts` says what the finished figure licenses. Verified on fresh
-scenes at 1.00 and 0.99; from a drawing whose auxiliary line starts off the
-apex and at the wrong angle:
+`read_angle_facts` says what the finished figure licenses. `iterate_rule` then
+folds the loop into `construct_until_parallel`, which runs the constructor to
+its own stopping point and keeps whichever drawing the reader most calls the
+proof configuration — so a wrong step costs a candidate rather than the proof.
+From a drawing whose auxiliary line starts off the apex and at the wrong angle:
 
 ```
-PROVED: 'triangle0' => 'B1+A3+B2=180'   (8 steps, confidence 0.961)
-  --construct_aux_line [spec->spec]-->  triangle0|move_up
-  --construct_aux_line [spec->spec]-->  triangle0|move_up|move_up
-  --construct_aux_line [spec->spec]-->  ...|rotate_cw          (x4)
-  --read_angle_facts  [spec->abst]-->  'A1=B1,A2=B2,A1+A3+A2=180'
-  --substitute_equalities [abst->abst]-->  'B1+A3+B2=180'
+PROVED: 'triangle0' => 'B1+A3+B2=180'   (3 steps, confidence 0.877)
+  --construct_until_parallel [spec->spec]-->  triangle0|move_up|move_up|rotate_cw x5
+  --read_angle_facts        [spec->abst]-->  'A1=B1,A2=B2,A1+A3+A2=180'
+  --substitute_equalities   [abst->abst]-->  'B1+A3+B2=180'
 ```
 
-Confidence is the product along the chain, so the construction loop — not the
-reading step — is what the number is mostly made of, and a rule that is merely
-*above threshold* is not good enough to be applied six times. Train the same
-two rules to 0.95 and 0.98 instead (1200 examples, 30 epochs, which is what
-this example used to do) and the identical proof comes out at **0.68**: six
-links at 0.95 is 0.74 before the reader is even consulted, and a rule that
-cannot resolve the parallel tolerance spends a seventh rotation on a scene that
-was already in the proof configuration. That is the conclusions' 0.99999¹⁰⁰⁰
-argument seen from the wrong end, and it is why the example now trains to
+Confidence is the product along the chain, so a rule that is merely *above
+threshold* is not good enough to be applied six times: six links at 0.95 is
+0.74 before the reader is even consulted. That is the conclusions' 0.99999¹⁰⁰⁰
+argument seen from the wrong end, and it is why this example trains to
 convergence rather than to "verified".
 
-There is a gap underneath that verification cannot see. `construct_aux_line`
-verified at 0.955 scores **0.676** on the states the construction loop actually
-visits, and carries only 57% of constructions through to the proof
-configuration. `verify_rule` measures it on freshly generated scenes; the loop
-feeds it its own output, which lands on the near-tolerance configurations the
-generator never emits. Trained to convergence those two numbers become 0.904
-and 87%. A specific→specific rule is applied to its own outputs, so a held-out
-set of *inputs* is the weaker of the two checks available, and the confidence
-of a long chain is the thing that notices.
+Underneath sat a gap verification could not see, and it is worth reading as the
+cautionary result of the repository. A specific→specific rule is applied to its
+own outputs, so a held-out set of generated *inputs* is the weaker of the two
+checks available. The construction moves the line in steps of 0.12 and rotates
+it in steps of 0.15, into tolerances of 0.06 and 0.12 — it therefore finishes
+*near* the proof configuration and essentially never *on* it, while
+`triangle_scenes` drew nothing but the exact configuration. Probed directly,
+`read_angle_facts` called an exactly parallel line correct 40 times out of 40
+and the line its own construction produces 21 times out of 40. A rule
+verifying at **0.995** that cannot recognise a finished proof — and the search
+duly reported "space exhausted" after eleven nodes while every rule in the
+table read as trusted.
 
-`keep_proof` then stores the whole thing as one rule, and the benchmark drops
-from 8 rule applications to 1. The proof is replayed image by image into
+The repair takes two halves that do nothing apart: the policy now stops once
+another rotation would not get *closer* rather than the instant the tolerance
+is met, and the generator draws solved scenes across exactly that landing zone.
+Changing only the policy leaves every training label identical, because no
+generated scene lies in the window it affects; changing only the generator, if
+it fills the whole tolerance band, restores the proof and triples the rate of
+proofs licensed on unfinished constructions, because positives at 0.119 and
+negatives at 0.121 are the same picture with opposite labels.
+
+`keep_proof` then stores the whole thing as one rule — `triangle_angle_sum`,
+specific→abstract at 0.87 — and the benchmark drops to a single rule
+application, which is the `1/1 solved, 1 rule applications` in the screenshot
+above. The proof is replayed image by image into
 `renders/geometry/` (see below), which is the only way to check that the
 auxiliary line really did end up through the apex and parallel to the opposite
 edge.
@@ -316,25 +348,35 @@ Things implemented as described, and things where a choice had to be made:
   observed cells.
 * **The distributive rule is discovered, not asserted.** Its oracle checks each
   instance numerically before emitting it, and rejects any that does not hold.
-* **A found proof is not automatically a sound one, and the geometry run shows
-  it.** Replaying each proof and asking the oracle whether the drawing it ends
-  on genuinely licenses the angle facts, roughly one proof in six is not: the
-  reader says the alternate-angle equalities hold on a construction that is not
-  actually finished, and the proof terminates, crosses domains and reports a
-  confidence like any other. Verified accuracy does not catch this, because it
-  is measured on generated scenes while proof search visits the states the
-  construction loop produces — a different and harder distribution. Two things
-  follow. Widening the search makes it worse rather than better (see the `beam`
-  note in `proof.py`: more drawings visited means more of the reader's mistakes
-  found, so the extra "successes" are all unsound). And a benchmark counts a
-  task solved on `proof.found` alone, so `library_report` currently prices
-  these in. Folding the construction into `iterate_rule` helps with the
-  fragility and the length — the proof goes from eight steps to three and J
-  from 17704 to 13208 — but barely moves the soundness, 17 bad proofs in 120
-  down to 16, because the rule choosing among the candidate drawings is the
-  same reader that is wrong about them. Selection cannot repair its own judge.
-  The fix is auditing the final cell against something independent of the
-  reader, and it is not implemented.
+* **A rule must be trained where it will be USED, and the geometry run is a
+  case study in what happens otherwise.** The construction moves the auxiliary
+  line in steps of 0.12 and rotates it in steps of 0.15, into tolerances of
+  0.06 and 0.12 — so it can never finish on the exact configuration, and
+  `triangle_scenes` drew nothing else. Measured, the reader called an exactly
+  parallel line correct 40 times out of 40 and the line its own construction
+  actually produces 21 times out of 40. That is a rule verifying at 0.995 which
+  cannot recognise a finished proof, and it left `triangle_180` unproved with
+  the search reporting "space exhausted" after eleven nodes. Verification could
+  not see it: it draws from the same generator. The fix is in two halves that
+  only work together — the policy stops once another move would not get closer
+  rather than the instant the tolerance is met, and the generator draws solved
+  scenes across exactly that landing zone, staying clear of the 0.12 boundary
+  so no two near-identical drawings carry opposite labels.
+* **A found proof is still not automatically a sound one.** Replaying each
+  proof and asking the oracle whether the drawing it ends on genuinely licenses
+  the angle facts, a real fraction is not, and those proofs terminate, cross
+  domains and report a confidence like any other. Over 120 triangles the fix
+  above takes the benchmark scene from unproved to a genuine three-step proof
+  and removes every outright failure (14 scenes with no proof, now none), at
+  92 genuine proofs against 95 before — but the unsound ones go from 11 to 28,
+  because a reader that accepts a range of finished constructions accepts more
+  of everything. Widening the search is worse still (see `proof.search`'s
+  `beam`), and folding the loop into `iterate_rule` shortens the proof from
+  eight steps to three without helping soundness, since the rule choosing among
+  candidate drawings is the same reader that misjudges them — selection cannot
+  repair its own judge. A benchmark counts a task solved on `proof.found`
+  alone, so `library_report` prices these in. Auditing the final cell against
+  something independent of the reader is the fix, and it is not implemented.
 * **§3's base-plus-specialists construction is checked, not assumed.** The
   specialist is mined from one slice and the ensemble is judged on another; if
   it does not beat the base on held-out data, it is discarded and the base is
