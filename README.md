@@ -41,7 +41,7 @@ end, same `fa - fb` fusion; the head goes from `num_classes` logits to
 ```bash
 conda env create -f environment.yml      # python 3.10, numpy, torch+CUDA, pytest
 conda activate dynamicmultinet
-python -m pytest tests/ -q               # 36 tests, ~3 s
+python -m pytest tests/ -q               # 40 tests, ~3 s
 
 python examples/run_multiplication.py    # experiment 1
 python examples/run_geometry.py          # experiment 2
@@ -139,9 +139,23 @@ not just the accuracy:
 | grounding | worth | what it means |
 |---|---|---|
 | `definitional` | 1.0 | bottoms out in a definition (multiplication as repeated addition) |
+| `independent_chain` | 0.95 | a route sharing no rule and no teacher with what it checks |
 | `measured` | 0.9 | came from outside (collision geometry) |
 | `derived` / `rule_chain` | 0.7 | inherits the errors of the rules it used |
 | `constructed` | 0.2 | the machine checked its own handwriting |
+
+`independent_chain` is the interesting one, because grounding is a property of
+the *pair*, not of the reference alone. Two routes that share no rule and no
+training oracle cannot agree on the same *wrong* answer except by coincidence,
+and `verify.collision_probability` measures how likely that coincidence is from
+the reference's own answers: rewriting `37*32` into a sixteen-character
+expression collides at 0.0001, so agreement is confirmation rather than
+evidence, and the reported accuracy becomes a **lower bound** — disagreements
+are unattributed, since an unrelated reference is exactly the kind that can be
+wrong by itself. The same argument is worthless for a rule choosing one of four
+actions, where a quarter of agreements are luck, so the test is measured rather
+than assumed. The converse guard matters more: a reference that *runs* the rule
+under test scores a perfect 1.000 and means nothing, so it is refused outright.
 
 Trust is also what stops `simplify_library` from optimising the architecture
 away. Two rules that agree on a probe set are candidates for merging, but

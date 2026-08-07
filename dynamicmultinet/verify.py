@@ -18,6 +18,17 @@ the renderer wrote; an accuracy of 0.997 against `product_by_definition` means
 the rewrite rule survived contact with arithmetic. The second is worth more,
 and `report.strength` says so rather than leaving it to whoever reads the log.
 
+Grounding is not a property of the reference alone but of the PAIR. A chain
+that shares no rule and no training oracle with what it checks, and whose
+answers are spread widely enough that two routes cannot collide by luck, is
+worth far more than its links suggest: unrelated routes cannot agree on the
+same wrong answer, so every agreement is a confirmation and the accuracy is a
+lower bound rather than an estimate. `independence` decides that on evidence
+instead of assuming it -- the same argument is worthless for a rule choosing
+one of four actions, where a quarter of agreements are coincidence. The
+converse guard matters more: a reference that runs the rule under test scores
+a perfect 1.000 and means nothing, so it is refused.
+
 The threshold matters for the same reason as the 0.99999^1000 argument in the
 conclusions: a chain's confidence is the product of its links', so a rule that
 verifies at 0.98 is not "nearly right", it is a rule that breaks a fifty-step
@@ -41,8 +52,122 @@ GROUNDING_STRENGTH = {
     "measured": 0.9,        # came from outside
     "definitional": 1.0,    # bottoms out in a definition
     "rule_chain": 0.7,
+    # A chain that shares no rule and no training signal with what it checks.
+    # Worth nearly as much as a definition, for the reason in `independence`.
+    "independent_chain": 0.95,
     "unknown": 0.0,
 }
+
+
+def primitives(rule: Rule) -> set[str]:
+    """Every rule that firing `rule` can end up invoking, itself included.
+
+    A composite hides its members and an ensemble hides its specialists, so
+    comparing top-level names would call `ref[distributive_learned+render]`
+    independent of `distributive_learned`.
+    """
+    names = {rule.name}
+    for sub in getattr(rule, "members", ()):
+        names |= primitives(sub)
+    base = getattr(rule, "base", None)
+    if base is not None:
+        names |= primitives(base)
+    for _, spec in getattr(rule, "specialists", ()):
+        names |= primitives(spec)
+    return names
+
+
+def _training_signal(rule: Rule) -> set[str]:
+    """The oracles a rule (or anything inside it) was fitted to.
+
+    Two nets trained by the same oracle inherit that oracle's mistakes, so they
+    can agree perfectly and be wrong together. Different weights are not
+    independence; a different teacher is.
+    """
+    out: set[str] = set()
+    recipe = getattr(rule, "recipe", None)
+    if recipe is not None and getattr(recipe, "oracle", ""):
+        out.add(recipe.oracle)
+    for sub in getattr(rule, "members", ()):
+        out |= _training_signal(sub)
+    base = getattr(rule, "base", None)
+    if base is not None:
+        out |= _training_signal(base)
+    for _, spec in getattr(rule, "specialists", ()):
+        out |= _training_signal(spec)
+    return out
+
+
+@dataclass
+class Independence:
+    """Whether a reference could have agreed with a rule for a shared reason.
+
+    Agreement is only evidence to the extent that the two routes could have
+    disagreed. Three things can destroy that, and they are separated here
+    because they call for different responses:
+
+    `shared_rules`    the reference runs the rule under test, or something the
+                      rule under test also runs. Agreement is then partly the
+                      rule agreeing with itself.
+    `shared_oracles`  both were taught by the same oracle, so both learned its
+                      errors and will reproduce them together.
+    `chance`          the collision probability of the reference's own answers
+                      on this probe set. Where a rule picks one of four
+                      actions, two unrelated routes agree a quarter of the time
+                      for nothing; where it writes a sixteen-character
+                      expression, coincidental agreement is negligible, and
+                      that is what makes agreement worth so much there.
+    """
+
+    shared_rules: list[str] = field(default_factory=list)
+    shared_oracles: list[str] = field(default_factory=list)
+    chance: float = 0.0
+    max_chance: float = 0.05
+
+    @property
+    def independent(self) -> bool:
+        return (not self.shared_rules and not self.shared_oracles
+                and self.chance <= self.max_chance)
+
+    def why_not(self) -> str:
+        if self.shared_rules:
+            return f"the reference runs {', '.join(sorted(self.shared_rules))}"
+        if self.shared_oracles:
+            return f"both were taught by {', '.join(sorted(self.shared_oracles))}"
+        if self.chance > self.max_chance:
+            return (f"answers collide by chance {self.chance:.4f} of the time, "
+                    f"over the {self.max_chance} that makes agreement mean anything")
+        return ""
+
+
+def collision_probability(answers: Sequence[str]) -> float:
+    """P(two draws from this answer distribution coincide).
+
+    Estimated from the reference's own outputs rather than from the size of the
+    codec's vocabulary: what matters is how concentrated the answers actually
+    are on this probe set, not how many the rule could in principle emit.
+    """
+    if len(answers) < 2:
+        return 1.0
+    counts: dict[str, int] = {}
+    for a in answers:
+        counts[a] = counts.get(a, 0) + 1
+    n = len(answers)
+    # Unbiased estimate of the repeat rate, so a set of all-distinct answers
+    # scores 0 rather than 1/n.
+    return sum(c * (c - 1) for c in counts.values()) / (n * (n - 1))
+
+
+def independence(rule: Rule, reference: Rule, answers: Sequence[str],
+                 max_chance: float = 0.05) -> Independence:
+    """Could this reference have agreed with this rule for a shared reason?"""
+    shared = primitives(rule) & primitives(reference)
+    return Independence(
+        shared_rules=sorted(shared),
+        shared_oracles=sorted(_training_signal(rule) & _training_signal(reference)),
+        chance=collision_probability(answers),
+        max_chance=max_chance,
+    )
 
 
 def normalize(text: str) -> str:
@@ -76,10 +201,24 @@ class VerificationReport:
     counterexamples: list[str] = field(default_factory=list)
     threshold: float = 0.99
     became_trusted: bool = False
+    independence: "Independence | None" = None
 
     @property
     def accuracy(self) -> float:
         return self.n_correct / self.n_checked if self.n_checked else 0.0
+
+    @property
+    def confirmed(self) -> bool:
+        """Did an independent route agree, so that agreement means correctness?
+
+        When nothing is shared, the two routes can only agree on a wrong answer
+        by landing on the SAME wrong answer, whose probability is the collision
+        rate in `Independence.chance`. Below that threshold, every case they
+        agree on is a case the rule got right -- which is a stronger statement
+        than any accuracy figure, because it does not rest on the reference
+        being right, only on it being unrelated.
+        """
+        return self.independence is not None and self.independence.independent
 
     @property
     def strength(self) -> float:
@@ -93,6 +232,16 @@ class VerificationReport:
                     "reference or the rule expects a different input domain.")
         head = (f"{self.rule}: {self.accuracy:.4f} over {self.n_checked} checks "
                 f"vs {self.source} [{self.grounding}], strength {self.strength:.3f}")
+        if self.confirmed:
+            head += (f"\n  INDEPENDENT: the reference shares no rule and no oracle "
+                     f"with {self.rule}, and its answers collide by chance only "
+                     f"{self.independence.chance:.4f} of the time, so the "
+                     f"{self.n_correct} agreements are confirmations, not "
+                     f"coincidences -- {self.accuracy:.4f} is a LOWER BOUND on "
+                     f"accuracy and the {self.n_checked - self.n_correct} "
+                     f"disagreements are unattributed (either side may be wrong)")
+        elif self.independence is not None:
+            head += f"\n  NOT independent: {self.independence.why_not()}"
         if self.counterexamples:
             head += "\n  counterexamples: " + "; ".join(self.counterexamples[:5])
         head += f"\n  {'TRUSTED' if self.became_trusted else 'not trusted'} " \
@@ -157,15 +306,33 @@ def verify_against_rules(
     reference_chain: Sequence[str],
     example_set: ExampleSet,
     threshold: float = 0.99,
+    independent_threshold: float | None = None,
+    max_chance: float = 0.05,
 ) -> VerificationReport:
     """Check a rule against a chain of rules the machine already trusts.
 
     This is how a learned rule gets checked with no oracle in sight: the
     distributive rewrite learned from pictures is compared with
-    decimal_split -> distribute_symbolic applied to the same input. Agreement
-    is evidence; it is weaker than a definitional check, and `grounding` says
-    so. If any link in the reference chain is itself untrusted, the check is
-    refused outright rather than quietly producing a number.
+    decimal_split -> distribute_symbolic applied to the same input. If any link
+    in the reference chain is itself untrusted, the check is refused outright
+    rather than quietly producing a number.
+
+    How much the agreement is worth depends on whether the reference COULD have
+    disagreed, which `independence` decides on three grounds: no shared rule, no
+    shared training oracle, and answers spread widely enough that coincidence is
+    negligible. When all three hold, agreement is not merely evidence that the
+    rule matches a reference -- it is evidence the rule is RIGHT, because two
+    unrelated routes have no way to land on the same wrong answer. A rewrite
+    into a sixteen-character expression makes that argument overwhelming; a rule
+    choosing one of four actions does not, and `max_chance` is what separates
+    the two rather than an assumption about which rules deserve it.
+
+    So an independent check is held to `independent_threshold` (default: the
+    same threshold, minus nothing -- pass a lower one deliberately), and the
+    accuracy it reports is a LOWER BOUND: disagreements are unattributed,
+    because an independent reference is exactly the kind that can be wrong on
+    its own. Attributing every disagreement to the rule, as the plain accuracy
+    does, understates a rule checked this way.
     """
     rule = library.get(rule_name)
     members = [library.get(n) for n in reference_chain]
@@ -176,13 +343,26 @@ def verify_against_rules(
         )
     reference = CompositeRule(f"ref[{'+'.join(reference_chain)}]", members)
 
+    # A reference that runs the rule under test agrees with it for free. This is
+    # the one failure that produces a perfect score, so it is refused rather
+    # than discounted.
+    circular = primitives(rule) & primitives(reference)
+    if circular:
+        raise ValueError(
+            f"{rule_name!r} cannot be verified against a reference that runs it: "
+            f"{sorted(circular)} appear on both sides, so agreement measures "
+            f"nothing. Build the reference from an independent route."
+        )
+
     n = correct = 0
     bad: list[str] = []
+    ref_answers: list[str] = []
     for ex in example_set.examples:
         want = reference.apply(ex.inp)
         if want is None:
             continue                       # the reference has nothing to say here
         n += 1
+        ref_answers.append(normalize(answer_text(want)))
         got = rule.apply(ex.inp)
         if got is not None and normalize(answer_text(got)) == normalize(answer_text(want)):
             correct += 1
@@ -190,12 +370,17 @@ def verify_against_rules(
             bad.append(f"{ex.inp.text!r} -> {answer_text(got)!r} "
                        f"(reference {answer_text(want)!r})")
 
+    indep = independence(rule, reference, ref_answers, max_chance=max_chance)
     report = VerificationReport(
-        rule=rule_name, n_checked=n, n_correct=correct, grounding="rule_chain",
-        source=reference.name, counterexamples=bad, threshold=threshold,
+        rule=rule_name, n_checked=n, n_correct=correct,
+        grounding="independent_chain" if indep.independent else "rule_chain",
+        source=reference.name, counterexamples=bad,
+        threshold=(independent_threshold if indep.independent
+                   and independent_threshold is not None else threshold),
+        independence=indep,
     )
     rule.stats.merge(n, correct, reference.name, bad)
-    if n and report.accuracy >= threshold:
+    if n and report.accuracy >= report.threshold:
         rule.trusted = True
         report.became_trusted = True
     return report

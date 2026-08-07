@@ -76,6 +76,33 @@ def _criterion(targets: np.ndarray, num_classes: int, weight_power: float,
     return nn.CrossEntropyLoss(weight=weight, label_smoothing=label_smoothing)
 
 
+def _seed_everything(seed: int) -> None:
+    """Pin every source of randomness a training run draws on.
+
+    `torch.manual_seed` alone is not enough on a GPU: cuDNN chooses its
+    convolution algorithms by benchmarking and several of the fast ones
+    accumulate in nondeterministic order, so the same data with the same seed
+    lands on different weights every run. Measured here, one rule trained three
+    times on identical data verified at 0.970, 0.978 and 0.983.
+
+    That spread is invisible until a rule is checked against a threshold, and
+    then it decides trust: a rule whose true accuracy sits near 0.95 is trusted
+    or not depending on which run you happened to make, which is the one thing
+    verification is supposed to rule out. Determinism costs a little speed and
+    buys a number that means the same thing twice.
+    """
+    import torch
+
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    # Process-global, like torch's own seeding: a rule is trained one at a time
+    # and the whole point is that the next run agrees with this one.
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
 def train_rule(
     rule: NeuralRule,
     example_set: ExampleSet,
@@ -92,7 +119,7 @@ def train_rule(
     import torch
     from torch.utils.data import DataLoader
 
-    torch.manual_seed(seed)
+    _seed_everything(seed)
     train_set, hold_set = example_set.split(holdout)
     ds_train = RuleDataset(train_set, rule.codec)
     ds_hold = RuleDataset(hold_set, rule.codec)

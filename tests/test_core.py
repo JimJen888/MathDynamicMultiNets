@@ -97,6 +97,70 @@ def test_transcribe_declines_an_observed_cell():
 
 
 # ---------------------------------------------------------------------------
+# What agreement with a reference is worth
+# ---------------------------------------------------------------------------
+def test_primitives_sees_through_a_composite():
+    """A chain hides its members, so comparing top-level names would call a
+    reference independent of a rule it actually runs."""
+    from dynamicmultinet.rules import CompositeRule
+    from dynamicmultinet.verify import primitives
+
+    m = RenMachine()
+    chain = CompositeRule("ref", [m.library.get("decimal_split"),
+                                  m.library.get("distribute_symbolic")])
+    assert primitives(chain) == {"ref", "decimal_split", "distribute_symbolic"}
+
+
+def test_verification_against_a_reference_that_runs_the_rule_is_refused():
+    """The one failure mode that produces a perfect score: a reference which
+    invokes the rule under test agrees with it for free."""
+    from dynamicmultinet.verify import verify_against_rules
+
+    m = RenMachine()
+    m.generate_data("mul_pairs", 20, seed=3, name="d", a_digits=2, b_digits=2,
+                    domain=ABSTRACT)
+    m.label_data("d", "distributive_rewrite")
+    with pytest.raises(ValueError, match="cannot be verified against a reference"):
+        verify_against_rules(m.library, "decimal_split",
+                             ["decimal_split", "distribute_symbolic"],
+                             m.datasets["d"])
+
+
+def test_collision_probability_separates_wide_from_narrow_answers():
+    """Agreement is only worth something when the routes could have differed.
+    Two unrelated rules choosing one of two actions agree half the time."""
+    from dynamicmultinet.verify import collision_probability
+
+    assert collision_probability([f"{i}0*55+{i}*55" for i in range(1, 90)]) < 0.01
+    assert collision_probability(["a", "b"] * 45) > 0.4
+    assert collision_probability(["only"]) == 1.0          # nothing to compare
+
+
+def test_a_shared_training_oracle_defeats_independence():
+    """Different weights are not independence. Two nets taught by the same
+    oracle inherit its mistakes and can agree while both are wrong."""
+    from dynamicmultinet.rules import PythonRule, Recipe
+    from dynamicmultinet.verify import independence
+
+    def make(name, oracle):
+        r = PythonRule(name, lambda c: c, SPECIFIC, ABSTRACT, source=name)
+        r.recipe = Recipe(oracle=oracle)
+        return r
+
+    spread = [f"{i}*7" for i in range(80)]
+    same = independence(make("a", "distributive_rewrite"),
+                        make("b", "distributive_rewrite"), spread)
+    assert not same.independent
+    assert same.shared_oracles == ["distributive_rewrite"]
+    assert "taught by" in same.why_not()
+
+    other = independence(make("a", "distributive_rewrite"),
+                         make("b", "read_back"), spread)
+    assert other.independent
+    assert other.why_not() == ""
+
+
+# ---------------------------------------------------------------------------
 # Proof search
 # ---------------------------------------------------------------------------
 def test_proof_requires_the_target_domain():
