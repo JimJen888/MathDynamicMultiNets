@@ -94,6 +94,20 @@ def plan(n_train: int, epochs: int) -> list[tuple[str, dict]]:
         ("verify_rule", {"rule": "read_angle_facts", "dataset": "facts_fresh",
                          "oracle": "alternate_angle_facts", "threshold": 0.90}),
 
+        # --- fold the construction loop into one rule -----------------------
+        # Proof search follows one action per drawing, so the construction is a
+        # single path and one wrong perception ends it -- "search space
+        # exhausted" after a dozen nodes, on rules that both verify above 0.99.
+        # This runs the constructor to its own fixed point and keeps whichever
+        # drawing `read_angle_facts` most calls the proof configuration, so a
+        # wrong step costs a candidate instead of the proof. The judge has to
+        # be the OTHER rule: a constructor scoring its own work is not evidence.
+        ("iterate_rule", {"step": "construct_aux_line",
+                          "judge": "read_angle_facts",
+                          "judge_target": "A1=B1,A2=B2,A1+A3+A2=180",
+                          "new_name": "construct_until_parallel",
+                          "max_iters": 12}),
+
         # --- the proof ------------------------------------------------------
         # A drawing that is NOT already in the proof configuration: the line
         # starts off the apex and at the wrong angle, so the chain has to run

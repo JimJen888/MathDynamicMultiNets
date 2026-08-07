@@ -49,7 +49,7 @@ from typing import Any, Callable, Iterable, Sequence
 import numpy as np
 
 from .codec import Codec, codec_from_config
-from .tapes import ABSTRACT, Content
+from .tapes import ABSTRACT, SPECIFIC, Content
 
 
 def require_torch(what: str = "learned rules") -> None:
@@ -150,6 +150,13 @@ class Rule(ABC):
 
     def applicable(self, content: Content) -> bool:
         return content.domain == self.domain_in and not content.is_blank
+
+    def successors(self, content: Content, k: int = 1) -> list[tuple[Content, float]]:
+        """Candidate outputs, best first, with a plausibility relative to the
+        first. An exact rule has one answer; `NeuralRule` overrides this to
+        offer the runners-up a proof search can fall back on."""
+        out = self.apply(content)
+        return [(out, 1.0)] if out is not None else []
 
     # -- economics -----------------------------------------------------------
     @abstractmethod
@@ -357,7 +364,7 @@ class NeuralRule(Rule):
         Same here: a rule that proposes an action is used through this, not
         through `apply`.
         """
-        if self.codec.num_slots != 1 or not hasattr(self.codec, "classes"):
+        if self.codec.num_slots != 1 or self.codec.options is None:
             raise TypeError(f"{self.name!r} does not make a single choice")
         import torch
 
@@ -374,8 +381,66 @@ class NeuralRule(Rule):
         self.net.eval()
         with torch.no_grad():
             probs = self.net(ta, tb).softmax(dim=-1)[0].cpu().numpy()
+        names = self.codec.options
         order = np.argsort(-probs)[:k]
-        return [(self.codec.classes[int(i)], float(probs[int(i)])) for i in order]
+        return [(names[int(i)], float(probs[int(i)])) for i in order]
+
+    def offers_alternatives(self) -> bool:
+        """May a search expand this rule's second choice?
+
+        Only when the rule PROPOSES rather than ASSERTS. A specific->specific
+        rule outputs another drawing, and nothing follows from that drawing
+        until some perception rule reads it -- so trying the runner-up costs a
+        wrong picture at worst, and the reading step still has to agree before
+        any conclusion appears.
+
+        A rule that writes into the abstract domain is making a claim, and
+        nothing downstream re-examines it. Its argmax is what verification
+        measured; its runner-up is the answer the rule itself rejected. Handing
+        that to a proof lets the machine assert the alternate-angle equalities
+        on a drawing its own perception says does not license them -- a
+        two-step "proof" of the theorem from an unconstructed triangle. So the
+        beam stops at the domain boundary, which is the same boundary the rest
+        of the architecture treats as the one that matters.
+        """
+        return (self.domain_out == SPECIFIC and self.codec.num_slots == 1
+                and self.codec.options is not None)
+
+    def successors(self, content: Content, k: int = 1) -> list[tuple[Content, float]]:
+        """Up to `k` candidate outputs, best first, each with a plausibility in
+        (0, 1] relative to the rule's own first choice.
+
+        A rule that assembles its answer slot by slot has exactly one candidate,
+        so this is `apply` and nothing changes. A rule that PROPOSES from a
+        short list has more, and withholding them is what makes a construction
+        loop brittle: the search follows the argmax off a cliff with no way
+        back, and one wrong decision out of eight ends the proof. The
+        information needed to recover was in the net all along, one line down
+        the ranking. See `offers_alternatives` for why this stops at rules that
+        write conclusions.
+        """
+        if k <= 1 or not self.offers_alternatives():
+            out = self.apply(content)
+            return [(out, 1.0)] if out is not None else []
+        if not self.applicable(content):
+            return []
+
+        ranked = self.rank_options(content, k)
+        if not ranked:
+            return []
+        index = {name: i for i, name in enumerate(self.codec.options)}
+        top = ranked[0][1] or 1.0
+        out: list[tuple[Content, float]] = []
+        for name, p in ranked:
+            cell = self.codec.decode(np.array(index[name]), content)
+            if cell is None:
+                continue
+            cell.meta["rule"] = self.name
+            cell.meta["p"] = p
+            # Relative to the rule's own top choice, so the first candidate is
+            # always 1.0 and a search run with k=1 scores exactly as before.
+            out.append((cell, min(1.0, p / top)))
+        return out
 
     def cost_bits(self) -> float:
         # The recipe, plus a flat charge for the architecture itself. Not the
@@ -434,6 +499,114 @@ class EnsembleRule(Rule):
         m = super().to_manifest()
         m["base"] = self.base.name
         m["specialists"] = [r.name for _, r in self.specialists]
+        return m
+
+
+class IteratedRule(Rule):
+    """Run a rule that stays in one domain until it stops changing anything,
+    and keep the BEST cell it produced rather than the last one.
+
+    A construction is a loop, and proof search is bad at loops. Each drawing
+    has exactly one successor -- whatever the constructor's argmax proposes --
+    so one wrong decision leaves a state with nowhere to go and the frontier
+    empties. The symptom is a proof that fails as "search space exhausted"
+    after a handful of nodes, on a library whose rules both verify above 0.99.
+    Widening the search does not fix it (see `proof.search`'s `beam`): it just
+    visits more drawings and finds more of the reader's mistakes.
+
+    Folding the loop into one rule removes the fragility at its source. The
+    iteration happens inside, where a wrong step is one more candidate rather
+    than the end of the proof, and the rule hands the search a single drawing.
+
+    "Best" is decided by a JUDGE rule, never by the step rule itself. The
+    constructor proposes; a separate perception rule says which drawing looks
+    like the configuration that licenses the conclusion. Letting the step rule
+    score its own output would be the circularity `verify_against_rules`
+    refuses -- a rule cannot be the evidence for itself -- and letting an
+    oracle score it would put the answer in the machine's hand.
+    """
+
+    def __init__(self, name: str, step: Rule, judge: Rule, judge_target: str,
+                 max_iters: int = 12, description: str = ""):
+        if step.domain_in != step.domain_out:
+            raise ValueError(
+                f"{step.name!r} maps {step.domain_in}->{step.domain_out}; only a "
+                "rule that stays in one domain can be iterated"
+            )
+        if judge.domain_in != step.domain_out:
+            raise ValueError(
+                f"the judge {judge.name!r} reads {judge.domain_in} cells but "
+                f"{step.name!r} writes {step.domain_out} ones"
+            )
+        super().__init__(name, step.domain_in, step.domain_out, description)
+        self.step = step
+        self.judge = judge
+        self.judge_target = judge_target
+        self.max_iters = max_iters
+        self._last_iters = 1
+
+    def score(self, content: Content) -> float:
+        """How strongly the judge says this cell is the wanted configuration."""
+        options = getattr(self.judge.codec, "options", None) if hasattr(
+            self.judge, "codec") else None
+        if not options:
+            out = self.judge.apply(content)
+            return 1.0 if out is not None and out.text == self.judge_target else 0.0
+        for name, p in self.judge.rank_options(content, len(options)):
+            if name == self.judge_target:
+                return p
+        return 0.0
+
+    def apply(self, content: Content) -> Content | None:
+        if not self.applicable(content):
+            return None
+        best, best_p, cur, n = None, -1.0, content, 0
+        for i in range(self.max_iters):
+            nxt = self.step.apply(cur)
+            if nxt is None:
+                break
+            n = i + 1
+            p = self.score(nxt)
+            if p > best_p:
+                best, best_p = nxt, p
+            # Two ways the loop is over: the step rule says so, or it stopped
+            # moving. The second matters because "done" is drawn as a no-op --
+            # it returns the cell unchanged -- so without this the iteration
+            # would spin out its whole budget re-deciding a finished drawing.
+            if nxt.meta.get("done") or nxt.text == cur.text:
+                break
+            cur = nxt
+        self._last_iters = max(n, 1)
+        if best is None:
+            return None
+        best.meta["rule"] = self.name
+        best.meta["p"] = best_p
+        best.meta["iterations"] = self._last_iters
+        return best
+
+    def cost_bits(self) -> float:
+        # Two names and a bound. The members are charged for in the library.
+        return 8.0 * (len(self.step.name) + len(self.judge.name)
+                      + len(self.judge_target) + 3) + 16.0
+
+    def steps(self) -> int:
+        """Applications the last run really cost -- this rule's length varies
+        with the drawing, and reporting the bound would price a two-step
+        construction as if it were twelve."""
+        return self.step.steps() * self._last_iters
+
+    def confidence(self) -> float:
+        # The step rule can be wrong repeatedly without costing anything: a bad
+        # candidate is simply not selected. What must hold is that the judge
+        # picked the right one, and that the step produced a right one at all.
+        return self.step.confidence() * self.judge.confidence()
+
+    def to_manifest(self) -> dict[str, Any]:
+        m = super().to_manifest()
+        m["step"] = self.step.name
+        m["judge"] = self.judge.name
+        m["judge_target"] = self.judge_target
+        m["max_iters"] = self.max_iters
         return m
 
 

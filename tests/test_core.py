@@ -160,6 +160,71 @@ def test_a_shared_training_oracle_defeats_independence():
     assert other.why_not() == ""
 
 
+def test_an_iterated_rule_keeps_the_best_cell_not_the_last():
+    """The point of iterating inside a rule: a wrong step becomes one more
+    candidate instead of the end of the proof, so the loop may run past the
+    good cell as long as the judge picks it back out."""
+    from dynamicmultinet.rules import IteratedRule, PythonRule
+
+    step = PythonRule("grow", lambda c: Content.specific_text(c.text + "x"),
+                      SPECIFIC, SPECIFIC, source="grow")
+    judge = PythonRule("is_three",
+                       lambda c: Content.abstract("yes" if len(c.text) == 3 else "no"),
+                       SPECIFIC, ABSTRACT, source="is_three")
+    loop = IteratedRule("grow_loop", step, judge, "yes", max_iters=5)
+
+    out = loop.apply(Content.specific_text("a"))
+    assert out.text == "axx"                  # the third cell, not the sixth
+    assert out.meta["iterations"] == 5        # it kept going and came back
+
+
+def test_an_iterated_rule_refuses_a_step_that_leaves_its_domain():
+    """Only a rule that stays put can be run to a fixed point, and a judge has
+    to read what the step writes."""
+    from dynamicmultinet.rules import IteratedRule, PythonRule
+
+    crossing = PythonRule("read", lambda c: Content.abstract(c.text),
+                          SPECIFIC, ABSTRACT, source="read")
+    same = PythonRule("edit", lambda c: c, SPECIFIC, SPECIFIC, source="edit")
+    judge = PythonRule("j", lambda c: Content.abstract("yes"),
+                       SPECIFIC, ABSTRACT, source="j")
+
+    with pytest.raises(ValueError, match="stays in one domain"):
+        IteratedRule("bad", crossing, judge, "yes")
+    with pytest.raises(ValueError, match="reads"):
+        IteratedRule("bad", same, crossing_judge := PythonRule(
+            "k", lambda c: Content.abstract("yes"), ABSTRACT, ABSTRACT, source="k"),
+            "yes")
+    assert crossing_judge.domain_in == ABSTRACT
+
+
+def test_an_exact_rule_offers_one_successor_whatever_the_beam():
+    """The beam is for rules that choose. A rule that computes has one answer,
+    and a wider search must not invent alternatives for it."""
+    m = RenMachine()
+    cell = Content.abstract("12*30")
+    rule = m.library.get("decimal_split")
+    assert len(rule.successors(cell, 1)) == 1
+    assert len(rule.successors(cell, 5)) == 1
+    assert rule.successors(cell, 5)[0][1] == 1.0
+
+
+def test_a_rule_that_writes_a_conclusion_never_offers_its_runner_up():
+    """A specific->specific rule proposes a drawing that perception must still
+    read. A specific->abstract rule asserts, and nothing re-examines it -- so
+    expanding its second choice would let a proof assert the very fact the
+    rule's own perception rejected."""
+    pytest.importorskip("torch")
+    from dynamicmultinet.codec import ChoiceCodec, SceneActionCodec
+    from dynamicmultinet.rules import NeuralRule
+
+    proposes = NeuralRule("construct", SceneActionCodec(), SPECIFIC)
+    asserts = NeuralRule("read_facts", ChoiceCodec(["a=b", "no_facts"]), SPECIFIC)
+
+    assert proposes.domain_out == SPECIFIC and proposes.offers_alternatives()
+    assert asserts.domain_out == ABSTRACT and not asserts.offers_alternatives()
+
+
 # ---------------------------------------------------------------------------
 # Proof search
 # ---------------------------------------------------------------------------

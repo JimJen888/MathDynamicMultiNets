@@ -316,6 +316,25 @@ Things implemented as described, and things where a choice had to be made:
   observed cells.
 * **The distributive rule is discovered, not asserted.** Its oracle checks each
   instance numerically before emitting it, and rejects any that does not hold.
+* **A found proof is not automatically a sound one, and the geometry run shows
+  it.** Replaying each proof and asking the oracle whether the drawing it ends
+  on genuinely licenses the angle facts, roughly one proof in six is not: the
+  reader says the alternate-angle equalities hold on a construction that is not
+  actually finished, and the proof terminates, crosses domains and reports a
+  confidence like any other. Verified accuracy does not catch this, because it
+  is measured on generated scenes while proof search visits the states the
+  construction loop produces — a different and harder distribution. Two things
+  follow. Widening the search makes it worse rather than better (see the `beam`
+  note in `proof.py`: more drawings visited means more of the reader's mistakes
+  found, so the extra "successes" are all unsound). And a benchmark counts a
+  task solved on `proof.found` alone, so `library_report` currently prices
+  these in. Folding the construction into `iterate_rule` helps with the
+  fragility and the length — the proof goes from eight steps to three and J
+  from 17704 to 13208 — but barely moves the soundness, 17 bad proofs in 120
+  down to 16, because the rule choosing among the candidate drawings is the
+  same reader that is wrong about them. Selection cannot repair its own judge.
+  The fix is auditing the final cell against something independent of the
+  reader, and it is not implemented.
 * **§3's base-plus-specialists construction is checked, not assumed.** The
   specialist is mined from one slice and the ensemble is judged on another; if
   it does not beat the base on held-out data, it is discarded and the base is

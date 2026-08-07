@@ -259,6 +259,31 @@ class RenMachine:
                              f"({rule.steps()} steps, {rule.cost_bits():.0f} bits)")
         return rule
 
+    def iterate_rule(self, step: str, judge: str, judge_target: str,
+                     new_name: str = "", max_iters: int = 12,
+                     description: str = ""):
+        """Turn a same-domain rule into one that runs its own loop and keeps
+        the best cell, judged by another rule. See `rules.IteratedRule`."""
+        from .rules import IteratedRule
+
+        s, j = self.library.get(step), self.library.get(judge)
+        rule = IteratedRule(new_name or f"{step}_loop", s, j, judge_target,
+                            max_iters=max_iters,
+                            description=description or
+                            f"run {step} up to {max_iters} times, keep the cell "
+                            f"{judge} most calls {judge_target!r}")
+        # Same convention as `compose`: a rule assembled from trusted parts is
+        # trusted, because it adds no new claim -- only a bound on how many
+        # times an already-verified rule may fire, and a choice among the cells
+        # it produced made by an already-verified judge.
+        rule.trusted = s.trusted and j.trusted
+        self.library.add(rule, replace=True)
+        self.note("iterate", f"{rule.name} = {step} x<={max_iters}, best by "
+                             f"{judge}=={judge_target!r} "
+                             f"({rule.cost_bits():.0f} bits, "
+                             f"{'trusted' if rule.trusted else 'untrusted'})")
+        return rule
+
     def distill(self, source: str, new_name: str, dataset: str, epochs: int = 12,
                 log=None):
         rule, report, agreement = compose_mod.distill(

@@ -239,6 +239,28 @@ def build_tools(m: RenMachine) -> dict[str, Tool]:
                 f"confidence {r.confidence():.4f}, "
                 f"{'trusted' if r.trusted else 'NOT trusted (a member is unverified)'}")
 
+    @tool("iterate_rule",
+          "Turn a rule that stays in one domain into one that runs its own "
+          "loop and keeps the BEST cell it produced, judged by another rule. "
+          "Use this for a construction: proof search follows one action per "
+          "drawing, so a single wrong step ends the proof with nowhere to go, "
+          "and folding the loop inside makes a wrong step just one more "
+          "candidate. The judge must be a different rule -- a rule scoring its "
+          "own output is not evidence.",
+          {"step": _STR, "judge": _STR,
+           "judge_target": {**_STR,
+                            "description": "the judge's answer that means "
+                                           "'this cell is the wanted one'"},
+           "new_name": _STR, "max_iters": _INT, "description": _STR},
+          ["step", "judge", "judge_target"])
+    def iterate_rule(step: str, judge: str, judge_target: str, new_name: str = "",
+                     max_iters: int = 12, description: str = "") -> str:
+        r = m.iterate_rule(step, judge, judge_target, new_name, max_iters, description)
+        return (f"{r.name}: {step} up to {max_iters} times, best cell chosen by "
+                f"{judge}=={judge_target!r}, {r.cost_bits():.0f} bits, "
+                f"confidence {r.confidence():.4f}, "
+                f"{'trusted' if r.trusted else 'NOT trusted (a member is unverified)'}")
+
     @tool("distill_rule",
           "Train a single net to imitate an existing rule or chain, collapsing "
           "it to one step. The distilled rule is a new empirical claim: verify "

@@ -61,6 +61,18 @@ class Codec(ABC):
     def target(self, content: Content) -> np.ndarray:
         """Supervised output cell -> label indices, same shape as `decode` takes."""
 
+    @property
+    def options(self) -> list[str] | None:
+        """The named alternatives this codec chooses between, or None.
+
+        None for a codec that builds its output slot by slot: there is no short
+        list of candidate answers to rank, because the answer is assembled
+        rather than picked. A codec that returns a list is announcing that a
+        planner may walk its second and third choices -- which is what lets
+        proof search recover from one wrong decision.
+        """
+        return None
+
     def config(self) -> dict[str, Any]:
         """Everything needed to rebuild this codec from a manifest."""
         return {"type": type(self).__name__}
@@ -149,6 +161,10 @@ class ChoiceCodec(Codec):
             raise ValueError(f"{label!r} is not one of this rule's classes {self.classes}")
         return np.array(self._index[label], dtype=np.int64)
 
+    @property
+    def options(self) -> list[str]:
+        return list(self.classes)
+
     def config(self) -> dict[str, Any]:
         return {"type": "ChoiceCodec", "classes": self.classes,
                 "out_domain": self.out_domain}
@@ -220,6 +236,10 @@ class SceneActionCodec(Codec):
         if label not in self._index:
             raise ValueError(f"{label!r} is not one of {self.actions}")
         return np.array(self._index[label], dtype=np.int64)
+
+    @property
+    def options(self) -> list[str]:
+        return list(self.actions)
 
     def config(self) -> dict[str, Any]:
         return {"type": "SceneActionCodec", "actions": self.actions,

@@ -95,6 +95,7 @@ def search(
     trusted_only: bool = True,
     min_confidence: float = 0.0,
     target_domain: str = "abstract",
+    beam: int = 1,
 ) -> Proof:
     """Best-first search for a rule chain from `start` to `target`.
 
@@ -106,6 +107,28 @@ def search(
     proof. Turn it off to explore what WOULD be provable if a candidate rule
     held, which is a reasonable thing for the controller to ask before deciding
     whether that rule is worth verifying.
+
+    `beam` is how many of a CHOOSING rule's ranked answers get expanded, and it
+    DEFAULTS TO 1 because widening it was measured and does not work. The idea
+    is tempting: a construction loop is a single path, so one wrong perception
+    ends the proof with no branch to recover through, and the right action is
+    usually the runner-up. But replaying each proof and asking the oracle
+    whether the drawing it ends on genuinely licenses the conclusion tells a
+    different story -- over 120 triangles, beam 1 proved 111 of which 94 were
+    genuine, while beam 2 proved all 120 and beam 3 all 120, with the genuine
+    count FALLING to 93 and 89 as the bogus count climbed from 17 to 27 to 31.
+
+    A wider beam does not find more proofs. It finds more drawings, and among
+    more drawings there are more that the reader misjudges, so the extra
+    "successes" are the search hunting down its own perception's mistakes.
+    That is worth stating plainly because the failure is invisible from the
+    outside: those proofs terminate, cross domains, and report a confidence.
+    Only replaying them against the oracle shows what they are.
+
+    Keep this at 1 unless you have an independent check on the final drawing.
+    Only rules that PROPOSE would ever get alternatives anyway -- see
+    `NeuralRule.offers_alternatives` for why a rule writing into the abstract
+    domain must never have its runner-up expanded.
     """
     pool: list[Rule] = [library.get(n) for n in rules] if rules else list(library)
     if trusted_only:
@@ -144,26 +167,29 @@ def search(
         for rule in pool:
             if rule.domain_in != cur.domain:
                 continue
-            nxt = rule.apply(cur)
-            if nxt is None:
-                continue
-            key = (nxt.domain, normalize(nxt.text))
-            if key in seen:
-                continue
-            seen.add(key)
+            for nxt, plausibility in rule.successors(cur, beam):
+                key = (nxt.domain, normalize(nxt.text))
+                if key in seen:
+                    continue
+                seen.add(key)
 
-            step = ProofStep(rule.name, cur.text, nxt.text, rule.domain_in, rule.domain_out)
-            new_path = path + [step]
-            new_conf = conf * rule.confidence()
-            new_bits = bits + rule.cost_bits()
-            if new_conf < min_confidence:
-                continue
-            if goal(nxt):
-                return Proof(True, start.text, target_text, new_path, nxt,
-                             expanded, new_conf, new_bits)
-            priority = len(new_path) + new_bits / BITS_PER_STEP
-            heapq.heappush(frontier, (priority, next(counter), nxt, new_path,
-                                      new_conf, new_bits))
+                step = ProofStep(rule.name, cur.text, nxt.text,
+                                 rule.domain_in, rule.domain_out)
+                new_path = path + [step]
+                # The runner-up is a real possibility, not a free one: a chain
+                # that leans on a second choice is less certain than one that
+                # did not have to, and `plausibility` is 1.0 for the argmax so
+                # nothing changes for a proof that never needed an alternative.
+                new_conf = conf * rule.confidence() * plausibility
+                new_bits = bits + rule.cost_bits()
+                if new_conf < min_confidence:
+                    continue
+                if goal(nxt):
+                    return Proof(True, start.text, target_text, new_path, nxt,
+                                 expanded, new_conf, new_bits)
+                priority = len(new_path) + new_bits / BITS_PER_STEP
+                heapq.heappush(frontier, (priority, next(counter), nxt, new_path,
+                                          new_conf, new_bits))
 
     return Proof(False, start.text, target_text, nodes_expanded=expanded,
                  note=("node budget exhausted" if expanded >= max_nodes
