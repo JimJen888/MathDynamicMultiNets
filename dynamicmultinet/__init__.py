@@ -1,6 +1,7 @@
 """
-dynamicMultiNet -- a Ren machine: a non-Turing architecture that forms multiple
-mapping rules (neural and symbolic) dynamically, under an LLM controller.
+MathDynamicMultiNets -- a Ren machine: a non-Turing architecture that forms
+multiple mapping rules (neural and symbolic) dynamically, under an LLM
+controller.
 
 Implements the architecture of "A Non-Turing Computer Architecture for
 Artificial Intelligence Forming Multiple Dynamic Rules and Its Halting Problem"

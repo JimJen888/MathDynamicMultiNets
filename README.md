@@ -1,4 +1,4 @@
-# dynamicMultiNet — a Ren machine
+# MathDynamicMultiNets — a Ren machine
 
 An implementation of the non-Turing computer architecture in *"A Non-Turing
 Computer Architecture for Artificial Intelligence Forming Multiple Dynamic
