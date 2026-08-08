@@ -195,27 +195,27 @@ derive it.
 A proposal is a **claim that can be wrong**, and it comes in two shapes with
 two different tests.
 
-**Shared property** — *"the property established on the known instances also
+**Shared pattern** — *"the pattern established on the known instances also
 holds on the unknown ones, under `<condition>`."* Same problem with new
 instances (a rewrite verified for two-digit products, claimed for three-digit
 ones) or two problems sharing a structure (what is proven of the 2-D case,
 claimed in 3-D under the right hypotheses). The proposal names **two** families
-— where the property holds, and where it is being claimed — because a single
+— where the pattern holds, and where it is being claimed — because a single
 family cannot state a transfer.
 
-A property can also be carried to a different **form** of itself, which is
+A pattern can also be carried to a different **form** of itself, which is
 often the sharper claim: set `known_oracle` to the form it already holds in and
 `oracle` to the form being claimed. The distributive law established as a split
 of the left factor, claimed as a split of the right one, over the very same
 numbers — a transfer that varying generator parameters cannot express.
 
-Both halves are checked, because "established" is half the claim: a property
+Both halves are checked, because "established" is half the claim: a pattern
 that never held on the known family has nothing to carry across, and saying so
 beats training a net to find out. A transfer that fails has produced
 counterexamples, which is the more useful outcome. From a live run:
 
 ```
-place_value_split_of_left_factor  [shared_property]
+place_value_split_of_left_factor  [shared_pattern]
   claim: 'distributive_rewrite', established on {"round_b": true}, also holds
          on {"round_b": false}, provided the rewrite splits only the left factor
          at the tens/units boundary and copies the right factor unchanged
@@ -225,7 +225,7 @@ place_value_split_of_left_factor  [shared_property]
 **Interconversion** — *"the unproven case maps to a solved one, so it is
 established by transport."* Fermat's Last Theorem via the semistable case of
 Taniyama–Shimura is the shape: the work is building the correspondence, not
-spotting a shared property. So the proposal is a **search** — find a chain of
+spotting a shared pattern. So the proposal is a **search** — find a chain of
 mapping rules from the unproven statement to the established one, or back — and
 `proof.search` already does exactly that:
 
@@ -243,7 +243,7 @@ model and must select rather than emit. Validation **executes** the recipe on a
 handful of examples rather than spell-checking it — the first live run proposed
 `tail_digits=0`, which raises inside the generator, and `domain="integers"`,
 which is not a value `mul_pairs` knows. Proposals come back untrusted and
-undeclared: a shared property goes through the ordinary `generate_data →
+undeclared: a shared pattern goes through the ordinary `generate_data →
 label_data → declare_rule → train_rule → verify_rule` path, an interconversion
 is settled by `prove`. Without credentials a much weaker offline heuristic runs
 instead, which can only notice that an oracle applies and never why, and cannot
@@ -274,6 +274,16 @@ wrong by itself. The same argument is worthless for a rule choosing one of four
 actions, where a quarter of agreements are luck, so the test is measured rather
 than assumed. The converse guard matters more: a reference that *runs* the rule
 under test scores a perfect 1.000 and means nothing, so it is refused outright.
+
+Sharing a component is only fatal when its **errors** are shared, which is why
+the guard asks whether each shared rule *can be wrong* rather than merely
+whether it is shared. An exact symbolic rule or a memorised table cannot, so a
+learned route ending in `eval_arith` may be checked against a symbolic route
+ending in `eval_arith`: the two still disagree wherever their perception
+differs, which is exactly what the check is measuring. Refusing that would
+leave every rule that finishes by computing something unverifiable by any
+route. A shared *learned* rule is refused, because its mistakes really do
+appear on both sides.
 
 Trust is also what stops `simplify_library` from optimising the architecture
 away. Two rules that agree on a probe set are candidates for merging, but

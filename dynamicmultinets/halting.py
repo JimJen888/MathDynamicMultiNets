@@ -168,11 +168,13 @@ def calibrate(
     # enough for lambda buys a lambda at least as tight).
     lam = max(lam, effective_lambda(n, delta))
     if lam >= eps:
+        usable = tightest_eps(n, delta)
         raise ValueError(
             f"a sample of {n} halting programs only supports lambda="
-            f"{lam:.4f}, which is not below eps={eps}. Sample more programs "
-            f"(N={sample_size(eps, delta, None)} would support eps={eps}), "
-            "or raise eps."
+            f"{lam:.4f}, which is not below eps={eps}. "
+            + (f"Retry with eps={usable}, " if usable is not None else "")
+            + f"or sample more programs (N={sample_size(eps, delta, None)} "
+              f"would support eps={eps})."
         )
 
     ceiling = max_step_error(times, n)
@@ -199,6 +201,34 @@ def decide(calibration: HaltingCalibration, run: Callable[[int], bool]) -> bool:
     if it stopped, it stopped.
     """
     return bool(run(int(math.ceil(calibration.threshold))))
+
+
+def tightest_eps(n_samples: int, delta: float = 0.05) -> float | None:
+    """The smallest eps a sample of this size can honestly support, or None.
+
+    `calibrate` needs `lambda < eps`, and lambda is fixed by how many halting
+    programs were observed. So a refusal is never "this is impossible" -- it is
+    "not at THIS eps", and the boundary is computable. Returning it turns a
+    dead end into a single retry: the caller passes the number back rather than
+    bisecting by hand, which matters most when the caller is a controller with
+    a step budget.
+
+    Rounded up to two decimals so the suggestion is a value somebody would
+    actually type, and checked to be strictly above lambda after rounding.
+    """
+    if n_samples <= 0:
+        return None
+    try:
+        lam = effective_lambda(n_samples, delta)
+    except ValueError:
+        # A sample too small to support any lambda below 1 supports no eps
+        # either. That is an answer -- "nothing would work" -- not an error to
+        # propagate out of a function whose whole job is to suggest a retry.
+        return None
+    eps = math.ceil(lam * 100.0) / 100.0
+    if eps <= lam:                       # lambda landed exactly on the boundary
+        eps += 0.01
+    return eps if eps < 1.0 else None
 
 
 def halting_budget_for_library(
@@ -234,12 +264,18 @@ def halting_budget_for_library(
             # Fitting lambda cannot rescue a sample this small, and saying
             # "need 0 < lambda < eps" would leave the caller with no idea what
             # to change. Name the sample size that would work.
+            usable = tightest_eps(len(proof_lengths), delta)
+            fix = (f"retry with eps={usable} (the tightest these {len(proof_lengths)} "
+                   f"proofs support), or add benchmark tasks -- about "
+                   f"{sample_size(eps, delta, None)} solved derivations would "
+                   f"support eps={eps}"
+                   if usable is not None else
+                   f"a sample this small supports no eps below 1.0; add "
+                   f"benchmark tasks (about {sample_size(eps, delta, None)} "
+                   f"solved derivations would support eps={eps})")
             raise ValueError(
                 f"{len(proof_lengths)} proof(s) support at most lambda="
                 f"{lam:.3f}, which is not below eps={eps}: no honest budget "
-                f"can be calibrated from them. About "
-                f"{sample_size(eps, delta, None)} solved derivations would "
-                f"support eps={eps} at delta={delta} -- add benchmark tasks, "
-                "or ask for a looser eps."
+                f"can be calibrated from them. {fix}."
             )
     return calibrate(proof_lengths, eps=eps, lam=lam, delta=delta, sigma=sigma)

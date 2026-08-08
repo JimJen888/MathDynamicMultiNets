@@ -145,6 +145,86 @@ def test_the_right_split_oracle_checks_each_instance_numerically():
             assert eval_int_expression(out.text) == eval_int_expression(text)
 
 
+def test_a_declined_rule_says_which_of_the_two_causes_it_was():
+    """A refusal has two causes needing opposite fixes -- wrong tape, or right
+    tape and wrong shape -- and they read identically from outside. The message
+    has to distinguish them, and name what would work instead."""
+    m = RenMachine()
+    m.write(ABSTRACT, "96*83")
+
+    with pytest.raises(ValueError) as form:
+        m.apply_rule("distribute_symbolic")          # wants (a+b)*c
+    said = str(form.value)
+    assert "The domain is right" in said and "FORM is not" in said
+    assert "(a+b)*c" in said
+    assert "decimal_split" in said                   # the step it is missing
+
+    with pytest.raises(ValueError) as dom:
+        m.apply_rule("transcribe_unsafe", domain=ABSTRACT)
+    assert "reads specific cells" in str(dom.value)
+
+
+def test_a_check_that_examined_nothing_says_which_link_stopped():
+    """'NO CHECKS RAN' looks like a failure of the rule and is almost always a
+    mismatch several steps earlier, so the link that declined is measured."""
+    from dynamicmultinets.verify import verify_against_rules
+
+    m = RenMachine()
+    m.generate_data("mul_pairs", 20, seed=3, name="d",
+                    a_digits=2, b_digits=2, domain=ABSTRACT)
+    m.label_data("d", "distributive_rewrite")
+    rep = verify_against_rules(m.library, "decimal_split",
+                               ["distribute_symbolic"], m.datasets["d"])
+    assert rep.n_checked == 0
+    said = rep.summary()
+    assert "the reference stops at 'distribute_symbolic'" in said
+    assert "20/20" in said and "(a+b)*c" in said
+
+
+def test_a_wrong_oracle_is_reported_as_a_wrong_oracle():
+    """When nothing is labelled, the oracle does not fit the generator, and
+    saying so beats blaming the rule."""
+    from dynamicmultinets.verify import verify_rule
+
+    m = RenMachine()
+    m.generate_data("mul_pairs", 12, seed=1, name="d",
+                    a_digits=2, b_digits=2, domain=ABSTRACT)
+    rep = verify_rule(m.library, "decimal_split", m.datasets["d"],
+                      oracle_name="alternate_angle_facts")
+    assert rep.n_checked == 0
+    assert "wrong oracle" in rep.summary()
+
+
+def test_an_unsupportable_eps_names_the_one_that_would_work():
+    """A refusal here is never 'impossible', only 'not at this eps', and the
+    boundary is computable -- so it is computed. A caller with a step budget
+    retries once instead of bisecting."""
+    from dynamicmultinets.halting import halting_budget_for_library, tightest_eps
+
+    lengths = [2, 1, 2, 1]
+    with pytest.raises(ValueError) as err:
+        halting_budget_for_library(lengths, 0.97, eps=0.1, delta=0.05)
+    suggested = tightest_eps(len(lengths), 0.05)
+    assert f"retry with eps={suggested}" in str(err.value)
+
+    # The suggestion works, and is the tightest that does.
+    cal = halting_budget_for_library(lengths, 0.97, eps=suggested, delta=0.05)
+    assert cal.threshold >= 1
+    with pytest.raises(ValueError):
+        halting_budget_for_library(lengths, 0.97, eps=round(suggested - 0.01, 2),
+                                   delta=0.05)
+
+
+def test_tightest_eps_gives_up_when_nothing_would_work():
+    """One sample supports no eps below 1.0, and saying so beats suggesting a
+    number that would fail too."""
+    from dynamicmultinets.halting import tightest_eps
+
+    assert tightest_eps(0, 0.05) is None
+    assert tightest_eps(1, 0.05) is None          # lambda >= 1 with one sample
+    assert tightest_eps(500, 0.05) < 0.1          # a real sample buys a tight eps
+
+
 # ---------------------------------------------------------------------------
 # Deciding what to form
 # ---------------------------------------------------------------------------
@@ -257,7 +337,7 @@ def test_a_proposal_must_name_things_that_exist():
     assert any("writes abstract" in p for p in validate(wrong_tape, m.library))
 
 
-def test_a_shared_property_states_a_transfer_not_just_a_family():
+def test_a_shared_pattern_states_a_transfer_not_just_a_family():
     """The claim is 'what holds there also holds here', so a proposal names the
     family where the property is established AND the one it is claimed for."""
     from dynamicmultinets.propose import RuleProposal, validate
@@ -379,7 +459,7 @@ def test_bad_json_from_the_model_costs_a_proposal_not_a_crash():
     [{"name": "distributive_learned", "domain_in": "specific",
       "domain_out": "specific", "generator": "mul_pairs",
       "oracle": "distributive_rewrite", "num_slots": 16,
-      "kind": "shared_property", "rationale": "split at the place-value mark"},
+      "kind": "shared_pattern", "rationale": "split at the place-value mark"},
      {"name": "nope", "domain_in": "specific", "domain_out": "specific",
       "generator": "does_not_exist", "oracle": "distributive_rewrite",
       "num_slots": 16}]"""
@@ -429,6 +509,56 @@ def test_verification_against_a_reference_that_runs_the_rule_is_refused():
         verify_against_rules(m.library, "decimal_split",
                              ["decimal_split", "distribute_symbolic"],
                              m.datasets["d"])
+
+
+def test_sharing_an_exact_rule_is_not_circularity():
+    """What makes a shared component fatal is that its ERRORS are shared. An
+    exact rule has none, so two routes that both finish by computing still
+    disagree wherever their perception differs -- refusing that check would
+    leave any rule that ends in arithmetic unverifiable by any route."""
+    from dynamicmultinets.compose import compose
+    from dynamicmultinets.verify import fallible, verify_against_rules
+
+    m = RenMachine()
+    m.generate_data("mul_pairs", 20, seed=5, name="d", a_digits=2, b_digits=2,
+                    domain=ABSTRACT)
+    m.label_data("d", "distributive_rewrite")
+    compose(m.library, ["decimal_split", "distribute_symbolic", "eval_arith"],
+            "value_route")
+
+    assert not fallible(m.library.get("eval_arith"))
+    assert not fallible(m.library.get("times_table_9"))
+
+    rep = verify_against_rules(m.library, "value_route",
+                               ["mul_by_definition", "eval_arith"],
+                               m.datasets["d"], threshold=0.95)
+    assert rep.n_checked == 20                      # it ran, rather than refusing
+    assert rep.independence.shared_exact == ["eval_arith"]
+    assert rep.independence.independent             # still counts as independent
+    assert "contributes no error" in rep.summary()
+
+
+def test_sharing_a_fallible_rule_is_still_refused():
+    """A component that can be wrong puts its mistakes on both sides."""
+    from dynamicmultinets.compose import compose
+    from dynamicmultinets.rules import PythonRule
+    from dynamicmultinets.verify import fallible, verify_against_rules
+
+    m = RenMachine()
+    m.generate_data("mul_pairs", 20, seed=5, name="d", a_digits=2, b_digits=2,
+                    domain=ABSTRACT)
+    m.label_data("d", "distributive_rewrite")
+
+    shaky = PythonRule("shaky", lambda c: c, ABSTRACT, ABSTRACT,
+                       source="x->x", exact=False)
+    shaky.trusted = True            # trusted, but not exact: it can be wrong
+    m.library.add(shaky)
+    assert fallible(shaky)
+    compose(m.library, ["shaky", "eval_arith"], "under_test")
+
+    with pytest.raises(ValueError, match="which can be wrong"):
+        verify_against_rules(m.library, "under_test",
+                             ["shaky", "mul_by_definition"], m.datasets["d"])
 
 
 def test_collision_probability_separates_wide_from_narrow_answers():

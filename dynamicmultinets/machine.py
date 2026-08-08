@@ -121,13 +121,50 @@ class RenMachine:
         cell = self.head(source)
         out = rule.apply(cell)
         if out is None:
-            raise ValueError(
-                f"{rule_name!r} does not apply to {cell.summary()} -- check the "
-                "input domain and the cell's form"
-            )
+            raise ValueError(self._why_declined(rule, cell, source))
         self.tape(out.domain).append(out)
         self.note("apply", f"{rule_name}: {cell.text!r} -> {out.text!r}")
         return out
+
+    def _why_declined(self, rule: Rule, cell: Content, tape: str) -> str:
+        """Why a rule refused a cell, and what to do instead.
+
+        "Does not apply -- check the input domain and the cell's form" is true
+        of every refusal and useful for none of them. The two causes need
+        opposite responses: a domain mismatch means the cell is on the wrong
+        tape, while a form mismatch means it is on the right tape in the wrong
+        shape and something has to reshape it first. Which one it is can be
+        determined rather than guessed, and the rules that DO accept the cell
+        can be listed, which usually names the missing step outright --
+        `distribute_symbolic` declining `96*83` is `decimal_split`'s cue.
+        """
+        if cell.domain != rule.domain_in:
+            return (f"{rule.name!r} reads {rule.domain_in} cells, but the head "
+                    f"of the {tape} tape is {cell.summary()}. Write to the "
+                    f"{rule.domain_in} tape first, or cross domains with a rule "
+                    f"that maps {cell.domain}->{rule.domain_in}.")
+
+        accepted = []
+        for other in self.library:
+            if other.name == rule.name or other.domain_in != cell.domain:
+                continue
+            try:
+                if other.apply(cell) is not None:
+                    accepted.append(other.name)
+            except Exception:                    # a rule that raises is not an option
+                continue
+            if len(accepted) >= 6:
+                break
+
+        msg = (f"{rule.name!r} declined {cell.summary()}. The domain is right; "
+               f"the FORM is not -- it accepts {rule.expects()}.")
+        if accepted:
+            msg += (f" Rules that do accept this cell: {', '.join(accepted)}. "
+                    f"One of those probably has to run first.")
+        else:
+            msg += (" No rule in the library accepts this cell as it stands, so "
+                    "the missing step is a rule that has not been formed yet.")
+        return msg
 
     # -- experiments ---------------------------------------------------------
     def generate_data(self, generator: str, n: int, seed: int = 0,
@@ -264,6 +301,11 @@ class RenMachine:
                       use_llm: bool = False, max_proposals: int = 3,
                       domain: str = ABSTRACT, observed: bool = False,
                       solved_domain: str | None = None,
+                      solved_via: Sequence[str] | None = None,
+                      solved_generator: str = "mul_pairs",
+                      solved_params: dict | None = None,
+                      solved_expand: Sequence[str] | None = None,
+                      n_solved: int = 12, solved_seed: int = 0,
                       form: str = "text", client=None, log=None):
         """Put unsolved cases beside solved ones, both drawn onto the specific
         tape, and summarise what they share as rules worth testing.
@@ -273,6 +315,15 @@ class RenMachine:
         See `propose.py`.
         """
         from . import propose as propose_mod
+
+        if solved_via:
+            # Derived worked instances, added to whatever was passed in. The
+            # machine runs the chain itself, so each case arrives with a real
+            # derivation instead of a hope that one exists.
+            solved = list(solved) + propose_mod.worked_examples(
+                self, solved_via, generator=solved_generator,
+                params=solved_params, n=n_solved, seed=solved_seed,
+                expand_terms=solved_expand or ())
 
         analogy = propose_mod.gather_analogy(self, unsolved, solved, goal=self.goal,
                                              domain=domain, observed=observed,

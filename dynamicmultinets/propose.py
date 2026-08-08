@@ -22,7 +22,7 @@ the controller as pixels, with the caption alongside only as provenance.
 
 Two shapes of analogy, and they are different CLAIMS with different tests.
 
-  SHARED PROPERTY   "the property established on the known instances also holds
+  SHARED PATTERN   "the pattern established on the known instances also holds
                     on the unknown ones, under <condition>."
 
                     Same problem, new instances: the distributive rule verified
@@ -30,11 +30,11 @@ Two shapes of analogy, and they are different CLAIMS with different tests.
                     ones. Or two problems sharing a structure: what is proven
                     of the 2-D Poincare conjecture is claimed to hold in 3-D
                     under the right hypotheses. Either way the claim names a
-                    family where the property is ESTABLISHED and a family where
+                    family where the pattern is ESTABLISHED and a family where
                     it is only CONJECTURED, and the condition is what is
                     supposed to license carrying it across.
 
-                    Tested by running the property on the unknown family. A
+                    Tested by running the pattern on the unknown family. A
                     transfer that holds is a rule to train and verify there; a
                     transfer that fails has produced counterexamples, which is
                     the more useful outcome and the one a single-family proposal
@@ -45,7 +45,7 @@ Two shapes of analogy, and they are different CLAIMS with different tests.
 
                     Fermat's Last Theorem and the semistable case of
                     Taniyama-Shimura: the work is not to notice a shared
-                    property but to build the correspondence. So what is
+                    pattern but to build the correspondence. So what is
                     proposed is a SEARCH -- find a chain of mapping rules from
                     the unproven statement to the proven one, or back -- and
                     the machine already has the machinery, because that is what
@@ -125,11 +125,11 @@ class Analogy:
 
 @dataclass
 class RuleProposal:
-    """"The property established on the known instances also holds on the
+    """"The pattern established on the known instances also holds on the
     unknown ones, under <condition>."
 
     Two families of the SAME generator, differing only in parameters: `known`
-    is where the property is already established, `unknown` is where it is
+    is where the pattern is already established, `unknown` is where it is
     being claimed. Splitting them is the whole point -- a proposal naming one
     family can say "learn this here" but not "what holds there also holds
     here", which is the claim an analogy actually makes and the only one that
@@ -137,7 +137,7 @@ class RuleProposal:
 
     `condition` is the "under proper condition" clause in words. It is not
     executed; nothing here can check that a stated hypothesis is the one really
-    doing the work. What IS checked is the consequence: run the property over
+    doing the work. What IS checked is the consequence: run the pattern over
     the unknown family and see whether it survives.
 
     Everything feeds the existing pipeline unchanged -- `as_data_args` to
@@ -156,7 +156,7 @@ class RuleProposal:
     condition: str = ""
     num_slots: int = 0
     from_oracle: bool = False               # output shape taken from the oracle
-    kind: str = "shared_property"
+    kind: str = "shared_pattern"
     rationale: str = ""
     proposed_by: str = ""
 
@@ -167,18 +167,18 @@ class RuleProposal:
 
     @property
     def established_as(self) -> str:
-        """The form the property already holds in, which is usually the same
+        """The form the pattern already holds in, which is usually the same
         one being claimed -- the transfer is then across instances."""
         return self.known_oracle or self.oracle
 
     def transfers_form(self) -> bool:
-        """Is the property being carried to a different FORM of itself?
+        """Is the pattern being carried to a different FORM of itself?
 
         The distributive law is the case that made this necessary. It is
         established as `distributive_rewrite`, which splits the left factor,
         and the interesting claim is that it also holds as
         `distributive_rewrite_right`, which splits the right one. That is not a
-        wider family of the same rewrite; it is the same property in a mirrored
+        wider family of the same rewrite; it is the same pattern in a mirrored
         form, and a proposal that could only vary generator parameters could
         state that the rewrite works on bigger numbers but never that it works
         on the other side.
@@ -189,12 +189,12 @@ class RuleProposal:
         known = json.dumps(self.known) if self.known else "the solved cases"
         unknown = json.dumps(self.unknown) if self.unknown else "the unsolved cases"
         if self.transfers_form():
-            text = (f"the property established as {self.known_oracle!r} on "
+            text = (f"the pattern established as {self.known_oracle!r} on "
                     f"{known} also holds as {self.oracle!r}")
             if self.unknown and self.unknown != self.known:
                 text += f" on {unknown}"
         else:
-            text = (f"the property {self.oracle!r}, established on {known}, "
+            text = (f"the pattern {self.oracle!r}, established on {known}, "
                     f"also holds on {unknown}")
         return f"{text}, provided {self.condition}" if self.condition else text
 
@@ -215,9 +215,9 @@ class RuleProposal:
                 "params": self.generator_params}
 
     def check(self, machine=None, n: int = 60) -> str:
-        """Does the property survive on the unknown family?
+        """Does the pattern survive on the unknown family?
 
-        Only the oracle is run, so this says whether the property is even
+        Only the oracle is run, so this says whether the pattern is even
         DEFINED where it is being claimed -- an oracle that declines every
         unknown instance has had its transfer refuted before a net is trained.
         Whether a learned rule attains it is what `verify_rule` measures after.
@@ -232,13 +232,13 @@ class RuleProposal:
         held = sum(1 for ex in fresh.examples if _labels(fn, ex))
         if not held:
             return (f"REFUTED before training: {self.oracle!r} produces nothing "
-                    f"on {json.dumps(self.generator_params)}, so the property "
+                    f"on {json.dumps(self.generator_params)}, so the pattern "
                     f"does not even apply there")
-        note = (f"the property applies to {held}/{len(fresh.examples)} of the "
+        note = (f"the pattern applies to {held}/{len(fresh.examples)} of the "
                 f"unknown family")
 
         # "Established" is half the claim, so check it rather than assume it.
-        # A transfer FROM somewhere the property never held is not a transfer.
+        # A transfer FROM somewhere the pattern never held is not a transfer.
         if self.known:
             try:
                 base = generate(self.generator, n, seed=11, **self.known)
@@ -265,7 +265,7 @@ class RuleProposal:
     def summary(self) -> str:
         shape = (f"from_oracle={self.oracle}" if self.from_oracle
                  else f"num_slots={self.num_slots}")
-        return (f"{self.name}  [shared_property]  "
+        return (f"{self.name}  [shared_pattern]  "
                 f"{self.domain_in}->{self.domain_out}\n"
                 f"    claim: {self.claim()}\n"
                 f"    because: {self.rationale}\n"
@@ -280,7 +280,7 @@ class Interconversion:
     transport."
 
     Fermat's Last Theorem via the semistable case of Taniyama-Shimura is the
-    shape: the content is not a property the two share but a CORRESPONDENCE
+    shape: the content is not a pattern the two share but a CORRESPONDENCE
     between them, and the work is building it. So this proposes a search --
     find a chain of mapping rules from `source` to `target`, or back -- and
     `check` runs it, because chaining rules across domains is what the machine
@@ -357,6 +357,60 @@ def _labels(fn, example) -> bool:
 # ---------------------------------------------------------------------------
 # Building the analogy
 # ---------------------------------------------------------------------------
+def worked_examples(machine, via: Sequence[str], generator: str = "mul_pairs",
+                    params: dict[str, Any] | None = None, n: int = 12,
+                    seed: int = 0, expand_terms: Sequence[str] = ()) -> list[str]:
+    """Solved cases DERIVED rather than asserted.
+
+    An analogy is only as good as its solved side, and hand-writing that side
+    has two failure modes that cost real runs here: the cases turn out not to
+    be solvable at all (`40*19 => 40*10+40*9` was unreachable until the mirror
+    rules existed), or they are solvable but share no structure with the open
+    question (`9*7 => 63` is a table lookup, not an instance of a regrouping).
+    Running the machine's own trusted chain over generated inputs avoids both:
+    every case comes back with a derivation because it was just derived, and
+    every case is an instance of exactly the pattern the chain performs.
+
+    `expand_terms` continues the decomposition into each `+`-separated part, so
+    one call produces the whole tree a person would write out --
+    `46*19 => 40*19+6*19`, then `40*19 => 40*10+40*9`, and so on down to the
+    times table -- rather than only its first level.
+    """
+    from .generators import generate
+
+    rules = [machine.library.get(name) for name in via]
+    followers = [machine.library.get(name) for name in expand_terms]
+    fresh = generate(generator, max(n * 3, 12), seed=seed, **(params or {}))
+
+    def run(text: str, chain) -> str:
+        cell = Content.abstract(text)
+        for rule in chain:
+            cell = rule.apply(cell) if cell is not None else None
+            if cell is None:
+                return ""
+        return cell.text if cell is not None and cell.text != text else ""
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for ex in fresh.examples:
+        start = ex.inp.text
+        got = run(start, rules)
+        if not got or start in seen:
+            continue
+        seen.add(start)
+        out.append(f"{start} => {got}")
+        if followers:
+            # The parts of what we just produced, taken one level further.
+            for term in (t.strip() for t in got.split("+")):
+                deeper = run(term, followers)
+                if deeper and term not in seen:
+                    seen.add(term)
+                    out.append(f"{term} => {deeper}")
+        if len(out) >= n:
+            break
+    return out[:n]
+
+
 def split_case(spec: str) -> tuple[str, str]:
     """`"12*30 => 10*30+2*30"` -> ("12*30", "10*30+2*30"); no arrow -> no target."""
     for sep in ("=>", "->"):
@@ -519,7 +573,7 @@ def validate(proposal, library=None, dry_run: bool = True) -> list[str]:
             and proposal.known == proposal.unknown
             and not proposal.transfers_form()):
         problems.append("the known and unknown families are identical and the "
-                        "property is the same one, so there is no transfer "
+                        "pattern is the same one, so there is no transfer "
                         "being claimed")
     if dry_run and not problems:
         problems += _dry_run(proposal)
@@ -717,18 +771,18 @@ place-value boundary, say, rather than any change to the characters.
 Propose up to {max_proposals} hypotheses. Each is a CLAIM that can be wrong,
 and there are exactly two shapes it may take.
 
-SHARED PROPERTY -- "the property that holds on the known instances also holds
+SHARED PATTERN -- "the pattern that holds on the known instances also holds
 on the unknown ones, under <condition>."
 
   Use this when the cases share a structure. They may be instances of one
   problem (a rewrite verified for two-digit products, claimed for three-digit
   ones) or two problems with the same shape (what is proven of the 2-D case,
   claimed for the 3-D case under the right hypotheses). Name the family where
-  the property is ALREADY ESTABLISHED and the family where you are CLAIMING it
+  the pattern is ALREADY ESTABLISHED and the family where you are CLAIMING it
   -- as two parameter sets for one generator -- because "what holds there also
   holds here" is the claim, and a single family cannot state it.
 
-  The property may also be carried to a different FORM of itself, which is
+  The pattern may also be carried to a different FORM of itself, which is
   often the sharper claim. Set "known_oracle" to the form it already holds in
   and "oracle" to the form you are claiming: the distributive law established
   as a split of the left factor, claimed as a split of the right one, over the
@@ -738,7 +792,7 @@ on the unknown ones, under <condition>."
 INTERCONVERSION -- "the unproven case maps to a solved one, so the unproven one
 is established by transport."
 
-  Use this when the work is not a shared property but a CORRESPONDENCE, the way
+  Use this when the work is not a shared pattern but a CORRESPONDENCE, the way
   Fermat's Last Theorem was carried by the semistable case of Taniyama-Shimura.
   You are asking the machine to search for a chain of mapping rules from the
   unproven statement to the established one, or back. Give the two statements;
@@ -755,9 +809,9 @@ ORACLES
 
 Answer with a JSON array and no other text.
 
-A shared-property element:
+A shared-pattern element:
 
-  {{"kind": "shared_property",
+  {{"kind": "shared_pattern",
     "name": "snake_case_identifier",
     "domain_in": "specific" | "abstract",
     "domain_out": "specific" | "abstract",
@@ -885,7 +939,7 @@ def parse_proposals(text: str, library=None, log: Callable[[str], None] = lambda
     for item in raw if isinstance(raw, list) else []:
         if not isinstance(item, dict):
             continue
-        kind = str(item.get("kind", "shared_property"))
+        kind = str(item.get("kind", "shared_pattern"))
         if kind == "interconversion":
             p: Any = Interconversion(
                 name=str(item.get("name", "")),

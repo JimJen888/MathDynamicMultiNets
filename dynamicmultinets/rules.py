@@ -158,6 +158,16 @@ class Rule(ABC):
         out = self.apply(content)
         return [(out, 1.0)] if out is not None else []
 
+    def expects(self) -> str:
+        """What this rule accepts, in one phrase.
+
+        Every rule can decline a cell, and "it declined" is not a usable answer
+        for whoever has to fix it -- the domain is usually right and the FORM is
+        wrong, which reads identically from outside. A rule that can say what it
+        wanted turns a dead end into the next move.
+        """
+        return f"any {self.domain_in} cell"
+
     # -- economics -----------------------------------------------------------
     @abstractmethod
     def cost_bits(self) -> float:
@@ -221,6 +231,12 @@ class PythonRule(Rule):
 
     def cost_bits(self) -> float:
         return 8.0 * max(len(self.source), 8)
+
+    def expects(self) -> str:
+        """The left-hand side of the rule's own statement of itself, which is
+        exactly the form it matches: `(a+b)*c -> a*c+b*c` accepts `(a+b)*c`."""
+        lhs = self.source.split("->")[0].strip()
+        return f"{self.domain_in} cells of the form {lhs}" if lhs else super().expects()
 
     def confidence(self) -> float:
         # An exact rule is exact; charging it the Laplace prior would make a

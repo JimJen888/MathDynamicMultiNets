@@ -264,6 +264,19 @@ def build_tools(m: RenMachine) -> dict[str, Tool]:
                         "description": "true for drawings the machine did not "
                                        "write itself, so the caption cannot be "
                                        "copied instead of read"},
+           "solved_via": {"type": "array", "items": _STR,
+                          "description": "a chain of existing rules to RUN over "
+                                         "generated inputs, so the solved side "
+                                         "is derived rather than asserted. Each "
+                                         "case then arrives with a real "
+                                         "derivation and is an instance of "
+                                         "exactly the pattern the chain performs"},
+           "solved_expand": {"type": "array", "items": _STR,
+                             "description": "a second chain applied to each part "
+                                            "of the result, so one call produces "
+                                            "the whole decomposition tree rather "
+                                            "than only its first level"},
+           "n_solved": {**_INT, "description": "how many worked cases to derive"},
            "solved_domain": {**_STR, "enum": [ABSTRACT, SPECIFIC],
                              "description": "where the SOLVED cases are posed, "
                                             "when that differs. Worked instances "
@@ -285,12 +298,17 @@ def build_tools(m: RenMachine) -> dict[str, Tool]:
     def propose_rules(unsolved: list, solved: list = None, use_llm: bool = False,
                       max_proposals: int = 3, domain: str = ABSTRACT,
                       observed: bool = False, solved_domain: str = "",
+                      solved_via: list = None, solved_expand: list = None,
+                      n_solved: int = 12,
                       form: str = "text", show_cells: bool = False) -> str:
         analogy, proposals = m.propose_rules(unsolved, solved or [],
                                              use_llm=use_llm,
                                              max_proposals=max_proposals,
                                              domain=domain, observed=observed,
                                              solved_domain=solved_domain or None,
+                                             solved_via=solved_via,
+                                             solved_expand=solved_expand,
+                                             n_solved=n_solved,
                                              form=form)
         head = analogy.summary(cells=show_cells)
         if not proposals:
@@ -300,14 +318,14 @@ def build_tools(m: RenMachine) -> dict[str, Tool]:
         rows = []
         for p in proposals:
             # Each kind knows its own test, and running it here is cheap: a
-            # transfer that the property does not even apply to is refuted
+            # transfer that the pattern does not even apply to is refuted
             # before a net exists, and a correspondence either has a chain or
             # does not. Reporting the claim without testing it would hand the
             # controller a hypothesis dressed as a finding.
             rows.append(p.summary() + "\n    checked: " + p.check(m))
         return (f"{head}\n\n" + "\n\n".join(rows)
                 + "\n\nNone of these is trusted, or even declared. A shared "
-                  "property goes through generate_data -> label_data -> "
+                  "pattern goes through generate_data -> label_data -> "
                   "declare_rule -> train_rule -> verify_rule; an "
                   "interconversion is settled by prove.")
 

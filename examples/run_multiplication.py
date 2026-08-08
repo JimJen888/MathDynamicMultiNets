@@ -88,11 +88,20 @@ def plan(n_train: int, epochs: int) -> list[tuple[str, dict]]:
         # is where it can: pose them as drawings and they are unsolved too,
         # leaving an analogy whose solved side is empty and which therefore
         # compares nothing.
+        # The solved side is DERIVED, not listed: the machine runs its own
+        # trusted chain over generated products, so every worked case arrives
+        # with a real derivation and is an instance of exactly the regrouping
+        # in question. `solved_expand` carries each part one level further, so
+        # the analogy shows the whole tree down to the times table rather than
+        # its first row. Two hand-written anchors stay, because a reader wants
+        # to see the shape without running anything.
         ("propose_rules", {"unsolved": ["12*30 => 10*30+2*30",
                                         "47*83 => 40*83+7*83"],
-                           "solved": ["46*19 => 40*19+6*19",
-                                      "12*15 => 10*15+2*15",
-                                      "6*9 => 54", "2*5 => 10"],
+                           "solved": ["6*9 => 54", "2*5 => 10"],
+                           "solved_via": ["decimal_split", "distribute_symbolic"],
+                           "solved_expand": ["decimal_split_right",
+                                             "distribute_symbolic_right"],
+                           "n_solved": 12,
                            "domain": "specific", "observed": True,
                            "solved_domain": "abstract"}),
 
