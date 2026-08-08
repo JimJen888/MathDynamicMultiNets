@@ -39,6 +39,45 @@ from .tools import Tool, anthropic_schemas, build_tools
 
 DEFAULT_MODEL = "claude-opus-5"
 
+
+def load_credentials(path: str = ".env", override: bool = False) -> bool:
+    """Read `KEY=value` lines from a local `.env` into the environment.
+
+    The SDK's zero-argument client reads ANTHROPIC_API_KEY from the environment
+    and nothing here changes that; this only saves exporting it by hand in
+    every shell. Written out rather than pulled in as a dependency because it
+    is six lines and the package's install story is "numpy, and torch if you
+    want learned rules".
+
+    An already-set variable wins unless `override`, so a key exported for one
+    run is not silently replaced by a stale file. The file must not be
+    committed -- `.gitignore` carries it, and a key that reaches a remote is
+    a key to rotate, not to delete.
+    """
+    from pathlib import Path
+
+    f = Path(path)
+    if not f.is_absolute() and not f.is_file():
+        # Look beside the package as well as in the working directory, so an
+        # online run started from anywhere finds the same credentials. Without
+        # this the failure is a confusing one: the key is on disk, the run
+        # still reports no credentials, and nothing says why.
+        for base in (Path.cwd(), Path(__file__).resolve().parent.parent):
+            if (base / path).is_file():
+                f = base / path
+                break
+    if not f.is_file():
+        return False
+    for line in f.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key, value = key.strip(), value.strip().strip("'\"")
+        if key and (override or key not in os.environ):
+            os.environ[key] = value
+    return True
+
 SYSTEM_PROMPT = """\
 You are the controller of a Ren machine: a non-Turing computer with two tapes.
 
@@ -179,6 +218,7 @@ class LLMController(BaseController):
                     "the LLM controller needs the anthropic package: "
                     "pip install anthropic (or run with ScriptedController)"
                 ) from err
+            load_credentials()
             self._client = anthropic.Anthropic()
         return self._client
 

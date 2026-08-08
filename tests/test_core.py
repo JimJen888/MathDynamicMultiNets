@@ -96,6 +96,311 @@ def test_transcribe_declines_an_observed_cell():
     assert m.library.get("transcribe_unsafe").apply(seen) is None
 
 
+def test_a_decomposition_can_be_carried_down_to_the_times_table():
+    """Splitting only the left factor stops one level above the 9x9 table:
+    `46*19 -> 40*19+6*19` and then neither part has two non-zero places on the
+    left. The mirror rules finish it, which is what makes an arbitrarily large
+    product reachable from a small table."""
+    m = RenMachine()
+    from dynamicmultinets.propose import gather_analogy
+
+    tree = ["46*19 => 40*19+6*19",          # split left
+            "40*19 => 40*10+40*9",          # then right
+            "6*19 => 6*10+6*9",             # and right again
+            "6*9 => 54", "40*10 => 400"]    # bottoming out in arithmetic
+    a = gather_analogy(m, unsolved=tree)
+    assert not a.unsolved, [c.text for c in a.unsolved]
+    right = next(c for c in a.solved if c.text.startswith("40*19"))
+    assert right.derivation == ["decimal_split_right", "distribute_symbolic_right"]
+
+
+def test_the_mirror_rules_decline_what_has_nothing_to_split():
+    """A single-digit factor has one place value, so there is no sum to make
+    and the rule must decline rather than emit a degenerate rewrite."""
+    m = RenMachine()
+    right = m.library.get("decimal_split_right")
+    left = m.library.get("decimal_split")
+
+    assert right.apply(Content.abstract("40*9")) is None    # one digit on the right
+    assert right.apply(Content.abstract("40*10")) is None   # 10 is a single place
+    assert right.apply(Content.abstract("40*19")).text == "40*(10+9)"
+
+    assert left.apply(Content.abstract("6*19")) is None     # one digit on the left
+    assert left.apply(Content.abstract("46*19")).text == "(40+6)*19"
+
+
+def test_the_right_split_oracle_checks_each_instance_numerically():
+    """Like its left-hand twin, it does not assert the identity -- it evaluates
+    the rewrite and refuses to emit one that does not hold."""
+    from dynamicmultinets.dataset import Example
+    from dynamicmultinets.oracles import ORACLES
+
+    fn = ORACLES["distributive_rewrite_right"].fn
+    assert fn(Example(inp=Content.specific_text("40*19"))).text == "40*10+40*9"
+    assert fn(Example(inp=Content.specific_text("2*15"))).text == "2*10+2*5"
+    assert fn(Example(inp=Content.specific_text("6*9"))) is None      # nothing to split
+    for text in ("40*19", "6*19", "12*15", "47*83"):
+        out = fn(Example(inp=Content.specific_text(text)))
+        if out is not None:
+            assert eval_int_expression(out.text) == eval_int_expression(text)
+
+
+# ---------------------------------------------------------------------------
+# Deciding what to form
+# ---------------------------------------------------------------------------
+def test_a_case_is_measured_solved_not_taken_on_the_caller_s_word():
+    """A caller who mislabels its own examples would be asking for a hypothesis
+    about a distinction that is not there, so every case is put to proof search
+    and moved to the list its result says it belongs in."""
+    from dynamicmultinets.propose import gather_analogy
+
+    m = RenMachine()
+    # Handed in as UNSOLVED, but the machine already has the identity.
+    a = gather_analogy(m, unsolved=["12*30 => 10*30+2*30"])
+    assert [c.text for c in a.solved] == ["12*30 => 10*30+2*30"]
+    assert not a.unsolved
+    assert a.solved[0].derivation == ["decimal_split", "distribute_symbolic"]
+
+
+def test_the_same_case_is_unsolved_once_it_is_a_drawing():
+    """Posing the case on the specific tape is a different question: nothing
+    can read the screen yet, and `observed` stops the caption being copied."""
+    from dynamicmultinets.propose import gather_analogy
+
+    m = RenMachine()
+    a = gather_analogy(m, unsolved=["12*30 => 10*30+2*30"],
+                       domain=SPECIFIC, observed=True)
+    assert [c.text for c in a.unsolved] == ["12*30 => 10*30+2*30"]
+    assert a.unsolved[0].image is not None
+
+
+def test_a_case_reaches_the_controller_as_its_layout():
+    """What goes up is what the cell DRAWS -- how many boxes, joined by what,
+    with which factors stacked -- in readable text. Both sides of the case,
+    because the regrouping is in what it must become, not in where it starts."""
+    from dynamicmultinets.propose import gather_analogy
+
+    m = RenMachine()
+    a = gather_analogy(m, unsolved=["12*30 => 10*30+2*30"],
+                       domain=SPECIFIC, observed=True)
+    view = a.unsolved[0].view_text
+    assert "1 box" in view                      # 12*30 is one box
+    assert "2 boxes, joined by '+'" in view     # the target is two
+    assert "must become" in view
+    # Glyphs come back as the characters they were drawn from, not as marks.
+    assert "12" in view and "*30" in view
+
+
+def test_layout_text_shows_the_regrouping_as_a_change_in_boxes():
+    """The distributive analogy is a layout fact: one box becomes two, split at
+    the place-value boundary. That is what a proposer is meant to notice."""
+    from dynamicmultinets.render import layout_text
+
+    assert "1 box" in layout_text("12*30")
+    two = layout_text("10*30+2*30")
+    assert "2 boxes, joined by '+'" in two
+    assert "box 1: 10" in two and "box 2: 2" in two
+    # A product is stacked, which is how the specific domain draws it.
+    assert "*30" in two
+    # Relations split too, so a rewrite reads as boxed sides.
+    assert "'='" in layout_text("A1+A3+A2=180")
+
+
+def test_split_case_reads_a_target():
+    from dynamicmultinets.propose import split_case
+
+    assert split_case("12*30 => 10*30+2*30") == ("12*30", "10*30+2*30")
+    assert split_case("12*30 -> 360") == ("12*30", "360")
+    assert split_case("12*30") == ("12*30", "")
+
+
+def test_a_proposal_must_name_things_that_exist():
+    """The controller is a language model, so it selects from the registries
+    rather than inventing. A hallucinated generator is rejected here, not
+    discovered halfway through training."""
+    from dynamicmultinets.propose import RuleProposal, validate
+
+    m = RenMachine()
+    ok = RuleProposal(name="d", domain_in=SPECIFIC, domain_out=SPECIFIC,
+                      generator="mul_pairs", oracle="distributive_rewrite",
+                      num_slots=16)
+    assert validate(ok, m.library) == []
+
+    bad = RuleProposal(name="d", domain_in=SPECIFIC, domain_out=SPECIFIC,
+                       generator="invent_something", oracle="wishful", num_slots=16)
+    problems = validate(bad, m.library)
+    assert any("no generator" in p for p in problems)
+    assert any("no oracle" in p for p in problems)
+
+    clash = RuleProposal(name="render", domain_in=SPECIFIC, domain_out=SPECIFIC,
+                         generator="mul_pairs", oracle="distributive_rewrite",
+                         num_slots=16)
+    assert any("already exists" in p for p in validate(clash, m.library))
+
+    stray = RuleProposal(name="d", domain_in=SPECIFIC, domain_out=SPECIFIC,
+                         generator="mul_pairs", oracle="distributive_rewrite",
+                         num_slots=16, unknown={"nonsense": 1})
+    assert any("takes no parameter" in p for p in validate(stray, m.library))
+
+    # Values, not just names: these pass a spell-check and fail on execution.
+    crashes = RuleProposal(name="d", domain_in=SPECIFIC, domain_out=SPECIFIC,
+                           generator="mul_pairs", oracle="distributive_rewrite",
+                           num_slots=16,
+                           unknown={"a_digits": 2, "b_digits": 2,
+                                    "tail_digits": 0, "domain": "specific"})
+    assert any("fails" in p for p in validate(crashes, m.library))
+
+    wrong_tape = RuleProposal(name="d", domain_in=SPECIFIC, domain_out=SPECIFIC,
+                              generator="mul_pairs", oracle="distributive_rewrite",
+                              num_slots=16,
+                              unknown={"a_digits": 2, "domain": "abstract"})
+    assert any("writes abstract" in p for p in validate(wrong_tape, m.library))
+
+
+def test_a_shared_property_states_a_transfer_not_just_a_family():
+    """The claim is 'what holds there also holds here', so a proposal names the
+    family where the property is established AND the one it is claimed for."""
+    from dynamicmultinets.propose import RuleProposal, validate
+
+    m = RenMachine()
+    p = RuleProposal(name="distributive_on_three_digits",
+                     domain_in=SPECIFIC, domain_out=SPECIFIC,
+                     generator="mul_pairs", oracle="distributive_rewrite",
+                     known={"a_digits": 2, "b_digits": 2, "domain": "specific"},
+                     unknown={"a_digits": 3, "b_digits": 2, "domain": "specific"},
+                     condition="place-value splitting does not depend on width",
+                     num_slots=20)
+    assert validate(p, m.library) == []
+    claim = p.claim()
+    assert "established on" in claim and "also holds on" in claim
+    assert "provided place-value" in claim
+    # It trains on the family being CLAIMED, not the one already established.
+    assert p.as_data_args()["params"]["a_digits"] == 3
+    assert "applies to" in p.check(m)
+
+    same = RuleProposal(name="d", domain_in=SPECIFIC, domain_out=SPECIFIC,
+                        generator="mul_pairs", oracle="distributive_rewrite",
+                        known={"a_digits": 2}, unknown={"a_digits": 2},
+                        num_slots=16)
+    assert any("no transfer" in x for x in validate(same, m.library))
+
+
+def test_a_property_can_be_carried_to_another_form_of_itself():
+    """The sharpest transfer is not a wider family but the same property
+    mirrored: the distributive law established as a split of the left factor,
+    claimed as a split of the right one, over the very same numbers."""
+    from dynamicmultinets.propose import RuleProposal, validate
+
+    m = RenMachine()
+    fam = {"a_digits": 2, "b_digits": 2, "domain": SPECIFIC}
+    p = RuleProposal(name="distributive_on_the_right",
+                     domain_in=SPECIFIC, domain_out=SPECIFIC,
+                     generator="mul_pairs",
+                     known_oracle="distributive_rewrite",
+                     oracle="distributive_rewrite_right",
+                     known=fam, unknown=fam, num_slots=16,
+                     condition="place value does not prefer a side")
+    assert validate(p, m.library) == []      # identical families are fine here
+    assert p.transfers_form()
+    claim = p.claim()
+    assert "established as 'distributive_rewrite'" in claim
+    assert "also holds as 'distributive_rewrite_right'" in claim
+    # Both halves are measured: the base as well as the extension.
+    checked = p.check(m)
+    assert "unknown family" in checked and "known family" in checked
+
+
+def test_a_transfer_from_nowhere_is_caught():
+    """'Established' is half the claim. A property that never held on the known
+    family has nothing to carry across, and saying so beats training a net."""
+    from dynamicmultinets.propose import RuleProposal, validate
+
+    m = RenMachine()
+    p = RuleProposal(name="from_nothing", domain_in=SPECIFIC, domain_out=SPECIFIC,
+                     generator="mul_pairs",
+                     known_oracle="distributive_rewrite",
+                     oracle="distributive_rewrite_right",
+                     # one digit on the left: the left-hand split never applies
+                     known={"a_digits": 1, "b_digits": 2, "domain": SPECIFIC},
+                     unknown={"a_digits": 2, "b_digits": 2, "domain": SPECIFIC},
+                     num_slots=16)
+    assert validate(p, m.library) == []
+    assert "no base" in p.check(m)
+
+    bogus = RuleProposal(name="b", domain_in=SPECIFIC, domain_out=SPECIFIC,
+                         generator="mul_pairs", oracle="distributive_rewrite",
+                         known_oracle="not_a_real_oracle",
+                         known={"a_digits": 2}, unknown={"a_digits": 3},
+                         num_slots=16)
+    assert any("to be established in" in x for x in validate(bogus, m.library))
+
+
+def test_an_interconversion_is_settled_by_searching_for_the_chain():
+    """'The unproven case maps to a solved one.' The test is finding the chain,
+    which is what proof search does -- so `check` runs it."""
+    from dynamicmultinets.propose import Interconversion, validate
+
+    m = RenMachine()
+    p = Interconversion(name="transport", source="12*30", target="10*30+2*30",
+                        rationale="the same product, regrouped")
+    assert validate(p, m.library) == []
+    assert "maps -> the established" in p.claim()
+    found = p.check(m)
+    assert "FOUND" in found and "decimal_split" in found
+
+    nowhere = Interconversion(name="t2", source="12*30", target="not_reachable")
+    assert "no chain" in nowhere.check(m, max_depth=3)
+
+    degenerate = Interconversion(name="t3", source="12*30", target="12*30")
+    assert any("same statement" in x for x in validate(degenerate, m.library))
+
+    # The stated domain is honoured: the same claim about DRAWINGS is a
+    # different search, and nothing can read the screen yet.
+    drawn = Interconversion(name="t4", source="12*30", target="10*30+2*30",
+                            domain=SPECIFIC)
+    assert "no chain" in drawn.check(m, max_depth=6)
+
+    # A suggested route is a hint, so wrong names cost the hint, not the claim.
+    hinted = Interconversion(name="t5", source="12*30", target="10*30+2*30",
+                             via=["decimal_split", "next_construction_step"])
+    assert validate(hinted, m.library) == []
+    assert hinted.via == ["decimal_split"]          # the oracle name is gone
+    assert "dropped from the suggested route" in hinted.rationale
+
+
+def test_bad_json_from_the_model_costs_a_proposal_not_a_crash():
+    from dynamicmultinets.propose import parse_proposals
+
+    m = RenMachine()
+    assert parse_proposals("I think we should try harder", m.library) == []
+    assert parse_proposals("[{not json", m.library) == []
+
+    good = """Sure, here you go:
+    [{"name": "distributive_learned", "domain_in": "specific",
+      "domain_out": "specific", "generator": "mul_pairs",
+      "oracle": "distributive_rewrite", "num_slots": 16,
+      "kind": "shared_property", "rationale": "split at the place-value mark"},
+     {"name": "nope", "domain_in": "specific", "domain_out": "specific",
+      "generator": "does_not_exist", "oracle": "distributive_rewrite",
+      "num_slots": 16}]"""
+    got = parse_proposals(good, m.library)
+    assert [p.name for p in got] == ["distributive_learned"]
+    assert got[0].as_declare_args()["num_slots"] == 16
+
+
+def test_proposing_changes_nothing_in_the_library():
+    """A proposal is a question. Only declare_rule and verify_rule may answer
+    it, so nothing here may quietly install a rule."""
+    m = RenMachine()
+    before = sorted(m.library.rules)
+    _, proposals = m.propose_rules(unsolved=["12*30 => 10*30+2*30"],
+                                   domain=SPECIFIC, observed=True)
+    assert sorted(m.library.rules) == before
+    assert proposals, "the drawn case is unsolved, so something should be proposed"
+    assert "distributive_rewrite" in {p.oracle for p in proposals}
+    assert all(not p.name in m.library for p in proposals)
+
+
 # ---------------------------------------------------------------------------
 # What agreement with a reference is worth
 # ---------------------------------------------------------------------------

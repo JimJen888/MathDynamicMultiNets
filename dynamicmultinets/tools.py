@@ -239,6 +239,78 @@ def build_tools(m: RenMachine) -> dict[str, Tool]:
                 f"confidence {r.confidence():.4f}, "
                 f"{'trusted' if r.trusted else 'NOT trusted (a member is unverified)'}")
 
+    @tool("propose_rules",
+          "Decide WHAT to learn next. Give cases the machine cannot derive and "
+          "cases it can; both are drawn onto the specific tape and compared "
+          "there, and what they share comes back as rules worth forming -- a "
+          "generator, an oracle and an output shape, ready for declare_rule. "
+          "Call this before declare_rule when you do not already know which "
+          "rule is missing. Nothing is added to the library: a proposal is a "
+          "question, and verify_rule is what answers it.",
+          {"unsolved": {"type": "array", "items": _STR,
+                        "description": "cases no current rule chain reaches"},
+           "solved": {"type": "array", "items": _STR,
+                      "description": "cases it can already derive, for contrast"},
+           "use_llm": {"type": "boolean",
+                       "description": "summarise the drawings with the model "
+                                      "(needs credentials); otherwise a much "
+                                      "weaker offline heuristic is used"},
+           "max_proposals": _INT,
+           "domain": {**_STR, "enum": [ABSTRACT, SPECIFIC],
+                      "description": "where the cases start. 'specific' poses "
+                                     "them as drawings, which is a different "
+                                     "and usually harder question"},
+           "observed": {"type": "boolean",
+                        "description": "true for drawings the machine did not "
+                                       "write itself, so the caption cannot be "
+                                       "copied instead of read"},
+           "solved_domain": {**_STR, "enum": [ABSTRACT, SPECIFIC],
+                             "description": "where the SOLVED cases are posed, "
+                                            "when that differs. Worked instances "
+                                            "are usually things the machine can "
+                                            "do as symbols while the open cases "
+                                            "are drawings; posing both as "
+                                            "drawings leaves nothing solved and "
+                                            "nothing to compare"},
+           "form": {**_STR, "enum": ["text", "image"],
+                    "description": "how the specific-domain cells are shown: "
+                                   "'text' (default) writes each cell out as "
+                                   "characters at the resolution it was drawn; "
+                                   "'image' sends the rendered pixels, worth it "
+                                   "when layout is genuinely pictorial"},
+           "show_cells": {"type": "boolean",
+                          "description": "include the cells in the reply, so "
+                                         "the analogy can be read here too"}},
+          ["unsolved"])
+    def propose_rules(unsolved: list, solved: list = None, use_llm: bool = False,
+                      max_proposals: int = 3, domain: str = ABSTRACT,
+                      observed: bool = False, solved_domain: str = "",
+                      form: str = "text", show_cells: bool = False) -> str:
+        analogy, proposals = m.propose_rules(unsolved, solved or [],
+                                             use_llm=use_llm,
+                                             max_proposals=max_proposals,
+                                             domain=domain, observed=observed,
+                                             solved_domain=solved_domain or None,
+                                             form=form)
+        head = analogy.summary(cells=show_cells)
+        if not proposals:
+            return (f"{head}\n\nNo proposal survived validation. "
+                    "Every rule must come from a registered generator and "
+                    "oracle; show_catalogue lists them.")
+        rows = []
+        for p in proposals:
+            # Each kind knows its own test, and running it here is cheap: a
+            # transfer that the property does not even apply to is refuted
+            # before a net exists, and a correspondence either has a chain or
+            # does not. Reporting the claim without testing it would hand the
+            # controller a hypothesis dressed as a finding.
+            rows.append(p.summary() + "\n    checked: " + p.check(m))
+        return (f"{head}\n\n" + "\n\n".join(rows)
+                + "\n\nNone of these is trusted, or even declared. A shared "
+                  "property goes through generate_data -> label_data -> "
+                  "declare_rule -> train_rule -> verify_rule; an "
+                  "interconversion is settled by prove.")
+
     @tool("iterate_rule",
           "Turn a rule that stays in one domain into one that runs its own "
           "loop and keeps the BEST cell it produced, judged by another rule. "

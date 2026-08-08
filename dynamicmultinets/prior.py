@@ -172,6 +172,59 @@ def make_distribute_symbolic() -> PythonRule:
     )
 
 
+@prior_rule("decimal_split_right")
+def make_decimal_split_right() -> PythonRule:
+    """`40 * 19` -> `40 * (10+9)`: the same move on the OTHER factor.
+
+    The mirror of `decimal_split`, and it is here because its absence was a gap
+    rather than a decision. Splitting the left factor turns `46*19` into
+    `40*19+6*19`, and then neither part can be taken further: `40*19` has a
+    single non-zero place, so the left-hand rule declines it and the
+    decomposition stops one level above the times table. Multiplication is
+    commutative and nothing about place value prefers one side, so a machine
+    that can only split on the left cannot finish a decomposition it started.
+    """
+
+    def fn(c: Content) -> Content | None:
+        m = re.fullmatch(r"\s*(\d+)\s*\*\s*(\d+)\s*", c.text)
+        if not m:
+            return None
+        a, b = m.group(1), m.group(2)
+        if len(b) < 2:
+            return None
+        terms = [f"{int(d) * 10 ** (len(b) - 1 - i)}" for i, d in enumerate(b)]
+        terms = [t for t in terms if t != "0"]
+        if len(terms) < 2:
+            return None
+        return Content.abstract(f"{a}*({'+'.join(terms)})")
+
+    return PythonRule(
+        "decimal_split_right", fn, ABSTRACT, ABSTRACT,
+        description="write the RIGHT factor as a sum of place values",
+        source="a*b -> a*(b1+b2+..)",
+    )
+
+
+@prior_rule("distribute_symbolic_right")
+def make_distribute_symbolic_right() -> PythonRule:
+    """`a*(b+c)` -> `a*b+a*c`. The mirror identity, for the same reason."""
+
+    def fn(c: Content) -> Content | None:
+        m = re.fullmatch(r"\s*(\d+)\s*\*\s*\(([^()]+)\)\s*", c.text)
+        if not m:
+            return None
+        terms = [t for t in m.group(2).split("+") if t.strip()]
+        if len(terms) < 2:
+            return None
+        return Content.abstract("+".join(f"{m.group(1)}*{t.strip()}" for t in terms))
+
+    return PythonRule(
+        "distribute_symbolic_right", fn, ABSTRACT, ABSTRACT,
+        description="a*(b+c) = a*b+a*c",
+        source="a*(b+c) -> a*b+a*c",
+    )
+
+
 @prior_rule("substitute_equalities")
 def make_substitute_equalities() -> PythonRule:
     """Apply `x=y` facts to the last statement on the cell.

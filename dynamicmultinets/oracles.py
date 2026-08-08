@@ -129,6 +129,35 @@ def _distributive_rewrite(ex: Example) -> Content | None:
     return Content.abstract(rhs)
 
 
+@oracle("distributive_rewrite_right",
+        "a*b rewritten as a sum over the place values of the RIGHT factor, "
+        "each instance checked numerically before it is emitted",
+        "derived")
+def _distributive_rewrite_right(ex: Example) -> Content | None:
+    """The mirror of `distributive_rewrite`, and the reason it exists is worth
+    recording: the left-hand rule declines `40*19` and `6*19`, because it
+    splits the left factor and those have only one non-zero place there. So a
+    decomposition that starts `46*19 -> 40*19+6*19` cannot continue, and the
+    parts never reach the 9x9 table. Splitting on the right finishes it.
+
+    Having both also makes a transfer statable rather than merely true: the
+    distributive property established for one side, claimed for the other.
+    """
+    m = re.fullmatch(r"\s*(\d+)\s*\*\s*(\d+)\s*", ex.inp.text)
+    if not m:
+        return None
+    a, b = int(m.group(1)), m.group(2)
+    terms = [int(d) * 10 ** (len(b) - 1 - i) for i, d in enumerate(b)]
+    terms = [t for t in terms if t]
+    if len(terms) < 2:
+        return None
+    rhs = "+".join(f"{a}*{t}" for t in terms)
+    # The experiment, exactly as on the left: does this rewrite hold here?
+    if eval_int_expression(rhs) != a * int(b):
+        return None
+    return Content.abstract(rhs)
+
+
 @oracle("read_back",
         "the text the renderer was asked to draw -- supervision for a reader rule",
         "constructed")

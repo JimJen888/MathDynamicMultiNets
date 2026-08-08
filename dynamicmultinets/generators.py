@@ -31,7 +31,7 @@ from .dataset import Example, ExampleSet
 # a generator that disagrees with the oracle about where a construction stops
 # trains rules on configurations nobody scores them on.
 from .oracles import _ANGLE_STEP, _OFFSET_TOL
-from .tapes import Content
+from .tapes import ABSTRACT, SPECIFIC, Content
 
 GeneratorFn = Callable[..., "list[Example]"]
 
@@ -89,6 +89,19 @@ def catalogue() -> str:
 def _mul_pairs(n: int, rng: np.random.Generator, a_digits: int = 2, b_digits: int = 2,
                round_b: bool = False, tail_digits: int | None = None,
                domain: str = "specific") -> list[Example]:
+    # Say so rather than treating everything that is not "specific" as
+    # abstract. A controller that asks for domain="integers" means something,
+    # and silently drawing the opposite tape gives it a rule that reads symbols
+    # when it asked for one that reads the screen -- a mistake that survives
+    # training and verification, because both are measured on the wrong data.
+    if domain not in (ABSTRACT, SPECIFIC):
+        raise ValueError(f"domain must be {ABSTRACT!r} or {SPECIFIC!r}, "
+                         f"got {domain!r}")
+    if a_digits < 1 or b_digits < 1 or (tail_digits is not None and tail_digits < 1):
+        raise ValueError("digit counts must be at least 1; got "
+                         f"a_digits={a_digits}, b_digits={b_digits}, "
+                         f"tail_digits={tail_digits}")
+
     def draw(digits: int) -> int:
         lo, hi = 10 ** (digits - 1), 10 ** digits - 1
         return int(rng.integers(max(lo, 1), hi + 1))

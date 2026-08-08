@@ -11,3 +11,6 @@ renders/
 # Saved rule libraries: the manifest reproduces every rule from its recipe,
 # so the weights are a cache rather than source (see rules.RuleLibrary.save).
 *.pt
+
+# Local credentials. NEVER commit this file.
+.env

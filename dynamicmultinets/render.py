@@ -318,9 +318,57 @@ def to_ascii(img: np.ndarray, cols: int = 96) -> str:
     return "\n".join(rows)
 
 
-def save_png(img: np.ndarray, path: str) -> None:
-    """Write a tape cell to disk. Uses a minimal zlib/PNG writer so the package
-    still has no image-library dependency."""
+def layout_text(text: str) -> str:
+    """What the two views DRAW, written as ordinary readable text.
+
+    The specific tape holds pixels, and the information that matters about them
+    is not the strokes but the arrangement: which terms are boxed separately,
+    what separator sits between the boxes, and which factors are stacked inside
+    one box. This reports exactly that, with every glyph decoded to the
+    characters it was drawn from -- the drawn `10` comes back as `10`, not as a
+    grid of marks.
+
+    Derived from the same `split_top_level` and `_term_lines` the renderer uses,
+    so it is a faithful transcript of what was drawn rather than a second
+    opinion about it. It is a transcript, though, not a perceptual reading: no
+    net looks at the pixels here. A rule that has to READ an unseen drawing
+    still has to be learned, and `transcribe_unsafe` exists to keep that
+    distinction honest.
+
+    `12*30`      -> one box, the factors stacked
+    `10*30+2*30` -> two boxes with `+` between them
+
+    which is the whole distributive analogy, visible as a change in the number
+    of boxes rather than as a string edit.
+    """
+    parts = split_top_level(text, "+-=")
+    terms = [p for p in parts if p not in "+-="]
+    seps = [p for p in parts if p in "+-="]
+
+    rows = [f"    reads as:  {text}"]
+    if seps:
+        rows.append(f"    layout:    {len(terms)} boxes, joined by "
+                    + " ".join(f"'{s}'" for s in seps))
+    else:
+        rows.append(f"    layout:    {len(terms)} box")
+    for i, term in enumerate(terms, 1):
+        lines = _term_lines(term)
+        rows.append(f"      box {i}: {lines[0]}")
+        for line in lines[1:]:
+            rows.append(f"             {line}")
+    return "\n".join(rows)
+
+
+def png_bytes(img: np.ndarray) -> bytes:
+    """A tape cell as PNG, in memory. Uses a minimal zlib/PNG writer so the
+    package still has no image-library dependency.
+
+    Separate from `save_png` because a specific-domain cell has two destinations
+    that both need real pixels: the renders directory, where a human checks what
+    a rule was looking at, and `propose.py`, which shows the same cell to the
+    controller. A hypothesis summarised from a caption would not be a hypothesis
+    summarised from the specific domain.
+    """
     import struct
     import zlib
 
@@ -331,12 +379,16 @@ def save_png(img: np.ndarray, path: str) -> None:
         return (struct.pack(">I", len(data)) + tag + data
                 + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
 
-    png = (b"\x89PNG\r\n\x1a\n"
-           + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
-           + chunk(b"IDAT", zlib.compress(raw, 9))
-           + chunk(b"IEND", b""))
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, 9))
+            + chunk(b"IEND", b""))
+
+
+def save_png(img: np.ndarray, path: str) -> None:
+    """Write a tape cell to disk."""
     with open(path, "wb") as f:
-        f.write(png)
+        f.write(png_bytes(img))
 
 
 def _slug(text: str, limit: int = 40) -> str:

@@ -66,6 +66,36 @@ def plan(n_train: int, epochs: int) -> list[tuple[str, dict]]:
         ("add_task", {"name": "screen_to_value", "start": "12*30", "target": "360",
                       "domain": "specific", "observed": True}),
 
+        # --- deciding WHAT to form ------------------------------------------
+        # BEFORE anything is learned, which is the only point at which the
+        # question is real. The machine here has prior symbolic rules and no
+        # perception, so a product DRAWN on the screen is unreachable: that is
+        # what the proposals have to explain. Run this after the reader exists
+        # and every case below comes back solved by
+        # `read_expression -> decimal_split -> distribute_symbolic`, the tool
+        # proposes nothing, and the step is theatre.
+        #
+        # The scripted plan does not consume what comes back -- a fixed list of
+        # tool calls cannot branch on a result. It is the LLM controller
+        # (`--llm`) that reads the proposals and decides. Here they are printed
+        # so the two can be compared: what the machine would have chosen,
+        # against what this plan goes on to do.
+        # The solved side is WORKED INSTANCES of the same regrouping, not table
+        # lookups. `9*7 => 63` shares no structure with what is being asked; a
+        # product actually split at its place-value boundary does, and each
+        # part bottoms out in arithmetic and the 9x9 table, so the machine
+        # really can do them. They are posed on the ABSTRACT tape because that
+        # is where it can: pose them as drawings and they are unsolved too,
+        # leaving an analogy whose solved side is empty and which therefore
+        # compares nothing.
+        ("propose_rules", {"unsolved": ["12*30 => 10*30+2*30",
+                                        "47*83 => 40*83+7*83"],
+                           "solved": ["46*19 => 40*19+6*19",
+                                      "12*15 => 10*15+2*15",
+                                      "6*9 => 54", "2*5 => 10"],
+                           "domain": "specific", "observed": True,
+                           "solved_domain": "abstract"}),
+
         # --- reading the screen: specific -> abstract -----------------------
         # First, because everything else depends on it. A rule that works on
         # pictures cannot be cross-checked against algebra until the machine

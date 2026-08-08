@@ -123,6 +123,7 @@ executes code. `python -m dynamicmultinets.cli tools` prints the full list.
 
 | | |
 |---|---|
+| `propose_rules` | decide *what* to learn: compare unsolved cases with solved ones **in the specific domain** and summarise what they share |
 | `generate_data` / `label_data` | run an experiment, then ask an oracle what is true |
 | `declare_rule` / `train_rule` | decide what mapping a rule performs, and fit it |
 | `verify_rule` / `verify_against_rules` | check on fresh data, against an oracle **or** against a chain of already-trusted rules |
@@ -131,6 +132,123 @@ executes code. `python -m dynamicmultinets.cli tools` prints the full list.
 | `prove` / `prove_from_tape` / `keep_proof` | search for a rule chain; keep the one you find |
 | `library_report` / `simplify_library` | price the library; drop what stopped paying |
 | `halting_budget` | a search budget with a stated error rate (paper §5) |
+
+### Where a hypothesis comes from
+
+Verifying a rule presupposes somebody chose it. `propose_rules` is the step
+before that ([`propose.py`](dynamicmultinets/propose.py)): cases the machine
+cannot derive are put beside cases it can, **both drawn onto the specific
+tape**, and what they share comes back as rules worth forming.
+
+Drawing them is the point, not presentation. `12*30` and `10*30+2*30` are
+different strings; drawn, they are two arrangements of the same marks, and the
+regrouping is a fact about the layout — which is the architecture's claim, so a
+proposer that pattern-matched the abstract strings would be answering an easier
+question.
+
+By default the cell reaches the controller **as text**: what the drawing lays
+out, with every glyph decoded to the characters it came from.
+
+```
+UNSOLVED 12*30 => 10*30+2*30
+    reads as:  12*30
+    layout:    1 box
+      box 1: 12
+             *30
+    must become:
+    reads as:  10*30+2*30
+    layout:    2 boxes, joined by '+'
+      box 1: 10
+             *30
+      box 2: 2
+             *30
+```
+
+That is the structured view described rather than pictured — the boxes it
+draws, the separator between them, the factors stacked inside each — and it is
+where the analogy lives: **one box becomes two, split at the place-value
+boundary**, while the contrast case `9*7 => 63` stays one box throughout. The
+regrouping is a layout fact, not a string edit, which is the claim; but it
+arrives as text a model can read. `form="image"` sends the rendered pixels
+instead, worth it when layout is genuinely pictorial — a geometry sketch says
+more as an image than any description of it does.
+
+The layout comes from the same `split_top_level` and `_term_lines` the renderer
+uses, so it is a faithful transcript of what was drawn. It is a transcript,
+not a perceptual reading: no net looks at the pixels here, and a rule that must
+read an *unseen* drawing still has to be learned.
+
+Posing the cases matters for a second reason the tool makes explicit:
+
+```
+propose_rules(unsolved=["12*30 => 10*30+2*30"])                    # 0 unsolved
+propose_rules(unsolved=[...], domain="specific", observed=True)    # 1 unsolved
+```
+
+As symbols the case is *already solved* — `decimal_split → distribute_symbolic`
+is prior knowledge, and there is nothing to explain. As a drawing nothing
+touches it, and `observed` stops `transcribe_unsafe` answering by copying the
+caption. Solvedness is measured by proof search, not taken on the caller's
+word, so a case handed in as unsolved moves lists if the machine can in fact
+derive it.
+
+A proposal is a **claim that can be wrong**, and it comes in two shapes with
+two different tests.
+
+**Shared property** — *"the property established on the known instances also
+holds on the unknown ones, under `<condition>`."* Same problem with new
+instances (a rewrite verified for two-digit products, claimed for three-digit
+ones) or two problems sharing a structure (what is proven of the 2-D case,
+claimed in 3-D under the right hypotheses). The proposal names **two** families
+— where the property holds, and where it is being claimed — because a single
+family cannot state a transfer.
+
+A property can also be carried to a different **form** of itself, which is
+often the sharper claim: set `known_oracle` to the form it already holds in and
+`oracle` to the form being claimed. The distributive law established as a split
+of the left factor, claimed as a split of the right one, over the very same
+numbers — a transfer that varying generator parameters cannot express.
+
+Both halves are checked, because "established" is half the claim: a property
+that never held on the known family has nothing to carry across, and saying so
+beats training a net to find out. A transfer that fails has produced
+counterexamples, which is the more useful outcome. From a live run:
+
+```
+place_value_split_of_left_factor  [shared_property]
+  claim: 'distributive_rewrite', established on {"round_b": true}, also holds
+         on {"round_b": false}, provided the rewrite splits only the left factor
+         at the tens/units boundary and copies the right factor unchanged
+  checked: applies to 54/60 of the unknown family
+```
+
+**Interconversion** — *"the unproven case maps to a solved one, so it is
+established by transport."* Fermat's Last Theorem via the semistable case of
+Taniyama–Shimura is the shape: the work is building the correspondence, not
+spotting a shared property. So the proposal is a **search** — find a chain of
+mapping rules from the unproven statement to the established one, or back — and
+`proof.search` already does exactly that:
+
+```
+triangle_angle_sum_transported  [interconversion]
+  claim: the unproven 'B1+A3+B2=180' maps -> the established
+         'A1=B1,A2=B2,A1+A3+A2=180', so establishing the second carries the first
+  checked: no chain within depth 8 -- the correspondence is unbuilt, which is a
+           bound on the attempt, not a refutation
+```
+
+Neither is a rule, and neither is code: every part is a name the machine
+already has, validated before return, because the controller is a language
+model and must select rather than emit. Validation **executes** the recipe on a
+handful of examples rather than spell-checking it — the first live run proposed
+`tail_digits=0`, which raises inside the generator, and `domain="integers"`,
+which is not a value `mul_pairs` knows. Proposals come back untrusted and
+undeclared: a shared property goes through the ordinary `generate_data →
+label_data → declare_rule → train_rule → verify_rule` path, an interconversion
+is settled by `prove`. Without credentials a much weaker offline heuristic runs
+instead, which can only notice that an oracle applies and never why, and cannot
+tell the established family from the conjectured one at all; the gap between
+the two is the honest measure of what the controller contributes.
 
 **Only trusted rules may appear in a proof**, and trust comes from verification
 on data the rule was not trained on. The strength of the evidence is tracked,
@@ -326,6 +444,8 @@ dynamicmultinets/
   prior.py       what the machine already knows (exact, symbolic)
   generators.py  experiments it can run          } a closed registry: the LLM
   oracles.py     what is true, and how strongly   } picks by name, never by code
+  propose.py     which rule is worth forming — solved and unsolved cases
+                 compared in the specific domain
   train.py       fitting a rule; hard-case mining; specialists
   verify.py      trust, grounding strength, counterexamples
   proof.py       best-first search over rule chains, across domains

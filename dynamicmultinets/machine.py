@@ -259,6 +259,37 @@ class RenMachine:
                              f"({rule.steps()} steps, {rule.cost_bits():.0f} bits)")
         return rule
 
+    # -- deciding what to form ----------------------------------------------
+    def propose_rules(self, unsolved: Sequence[str], solved: Sequence[str] = (),
+                      use_llm: bool = False, max_proposals: int = 3,
+                      domain: str = ABSTRACT, observed: bool = False,
+                      solved_domain: str | None = None,
+                      form: str = "text", client=None, log=None):
+        """Put unsolved cases beside solved ones, both drawn onto the specific
+        tape, and summarise what they share as rules worth testing.
+
+        Returns (analogy, proposals). Nothing is added to the library: a
+        proposal is a question for `declare_rule` and `verify_rule` to answer.
+        See `propose.py`.
+        """
+        from . import propose as propose_mod
+
+        analogy = propose_mod.gather_analogy(self, unsolved, solved, goal=self.goal,
+                                             domain=domain, observed=observed,
+                                             solved_domain=solved_domain)
+        if use_llm:
+            proposals = propose_mod.llm_proposals(
+                self, analogy, client=client, max_proposals=max_proposals,
+                form=form, log=log or (lambda _s: None))
+        else:
+            proposals = propose_mod.heuristic_proposals(
+                self, analogy, max_proposals=max_proposals)
+        self.note("propose", f"{len(analogy.unsolved)} unsolved vs "
+                             f"{len(analogy.solved)} solved -> "
+                             f"{len(proposals)} proposal(s): "
+                             + ", ".join(p.name for p in proposals))
+        return analogy, proposals
+
     def iterate_rule(self, step: str, judge: str, judge_target: str,
                      new_name: str = "", max_iters: int = 12,
                      description: str = ""):
