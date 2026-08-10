@@ -33,6 +33,7 @@ from . import generators, oracles, proof as proof_mod, verify as verify_mod
 from .codec import ChoiceCodec, Codec, SceneActionCodec, TextSlotCodec
 from .dataset import DatasetStore, ExampleSet
 from .prior import install_prior_rules
+from .propose import check_form
 from .rules import NeuralRule, Rule, RuleLibrary, default_device
 from .tapes import ABSTRACT, AbstractTape, Content, SpecificTape
 
@@ -51,16 +52,23 @@ class RenMachine:
     """A non-Turing machine: two domains, one library of mapping rules."""
 
     def __init__(self, name: str = "ren", device: str | None = None,
-                 with_prior: bool = True, goal: str = ""):
+                 with_prior: bool = True, goal: str = "",
+                 propose_form: str = "text"):
         """`device=None` detects: a GPU is used when one is available.
 
         Pass "cpu" explicitly to pin it -- worth doing when you need two runs
         to match exactly, since cuDNN kernels do not reproduce CPU kernels
         bit-for-bit even under the same seed.
+
+        `propose_form` is the run-wide default for how `propose_rules` shows
+        specific-domain cells, and it is set here rather than per call because
+        the caller is often the LLM controller, which the example scripts
+        cannot reach into. See `propose_rules`.
         """
         self.name = name
         self.device = device or default_device()
         self.goal = goal
+        self.propose_form = check_form(propose_form)
         self.abstract = AbstractTape()
         self.specific = SpecificTape()
         self.library = RuleLibrary()
@@ -306,15 +314,25 @@ class RenMachine:
                       solved_params: dict | None = None,
                       solved_expand: Sequence[str] | None = None,
                       n_solved: int = 12, solved_seed: int = 0,
-                      form: str = "text", client=None, log=None):
+                      form: str = "", client=None, log=None):
         """Put unsolved cases beside solved ones, both drawn onto the specific
         tape, and summarise what they share as rules worth testing.
 
         Returns (analogy, proposals). Nothing is added to the library: a
         proposal is a question for `declare_rule` and `verify_rule` to answer.
         See `propose.py`.
+
+        `form` decides how the specific-domain cells reach the LLM -- "text"
+        writes each cell's layout out as characters, "image" sends the rendered
+        PNG. Left empty it follows `self.propose_form`, which is what a run-wide
+        `--form` setting moves, so the choice survives a call this code did not
+        write: with `--llm` it is the controller that calls this, not the
+        example script. It changes nothing when `use_llm` is False, since the
+        heuristic proposer never looks at the cells.
         """
         from . import propose as propose_mod
+
+        form = check_form(form or self.propose_form)
 
         if solved_via:
             # Derived worked instances, added to whatever was passed in. The

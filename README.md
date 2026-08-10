@@ -171,7 +171,21 @@ boundary**, while the contrast case `9*7 => 63` stays one box throughout. The
 regrouping is a layout fact, not a string edit, which is the claim; but it
 arrives as text a model can read. `form="image"` sends the rendered pixels
 instead, worth it when layout is genuinely pictorial — a geometry sketch says
-more as an image than any description of it does.
+more as an image than any description of it does. Any example script takes
+`--form image` to start a whole run that way:
+
+```bash
+./run.sh examples/run_geometry.py --llm --form image
+```
+
+which moves the default the `propose_rules` tool falls back to, so it holds for
+the calls the LLM controller makes rather than only the ones written into a
+scripted plan. Two things it does *not* touch. `--dump` is separate: that
+writes PNGs to disk for a human to check, and has nothing to do with what the
+model is sent. And the form is only read on the `--llm` path — with no LLM,
+`heuristic_proposals` sees neither the pixels nor the layout text, it runs each
+oracle over the case's plain string and keeps whichever produce an answer, so
+the same proposals come back under either form.
 
 The layout comes from the same `split_top_level` and `_term_lines` the renderer
 uses, so it is a faithful transcript of what was drawn. It is a transcript,

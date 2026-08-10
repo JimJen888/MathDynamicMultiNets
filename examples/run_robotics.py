@@ -99,6 +99,10 @@ def main() -> None:
                     help="directory the sketches are written to, so the rule's "
                          "answers can be checked against what it was looking at")
     ap.add_argument("--no-dump", action="store_true", help="do not write any images")
+    ap.add_argument("--form", choices=["text", "image"], default="text",
+                    help="how propose_rules shows the drawn cells: text writes "
+                         "each layout out as characters (the default), image "
+                         "sends the rendered pixels. Only affects --llm runs")
     args = ap.parse_args()
 
     # 1500x30 overfits: 0.72 on the holdout against 0.60 on fresh scenes, with
@@ -106,7 +110,7 @@ def main() -> None:
     # tell -- it is short of data, not of capacity -- and the rule then fails
     # its own 0.85 verification threshold, so it may not enter a proof at all.
     n_train, epochs = (300, 10) if args.quick else (6000, 80)
-    machine = RenMachine(goal=GOAL, device=args.device)
+    machine = RenMachine(goal=GOAL, device=args.device, propose_form=args.form)
 
     if args.llm:
         run = LLMController(machine, max_steps=40).run(GOAL)

@@ -136,6 +136,10 @@ def main() -> None:
                     help="directory the construction sketches are written to, so "
                          "the drawing the proof ran on can be checked by eye")
     ap.add_argument("--no-dump", action="store_true", help="do not write any images")
+    ap.add_argument("--form", choices=["text", "image"], default="text",
+                    help="how propose_rules shows the drawn cells: text writes "
+                         "each layout out as characters (the default), image "
+                         "sends the rendered pixels. Only affects --llm runs")
     args = ap.parse_args()
 
     # 1200x30 leaves both rules around 0.95, and 0.95 compounded over a
@@ -146,7 +150,7 @@ def main() -> None:
     # boundary, and the same proof comes out above 0.95. It costs ~10 minutes
     # on a GPU; --quick is still there for a 30-second smoke test.
     n_train, epochs = (300, 10) if args.quick else (4000, 60)
-    machine = RenMachine(goal=GOAL, device=args.device)
+    machine = RenMachine(goal=GOAL, device=args.device, propose_form=args.form)
 
     if args.llm:
         run = LLMController(machine, max_steps=50).run(GOAL)

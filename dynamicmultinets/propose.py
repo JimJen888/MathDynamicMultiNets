@@ -80,6 +80,17 @@ from .generators import GENERATORS
 from .oracles import ORACLES
 from .tapes import ABSTRACT, SPECIFIC, Content
 
+# How a specific-domain cell reaches the controller. Checked rather than
+# silently ignored: an unknown value used to fall through to the text branch,
+# so `form="images"` looked like it had been honoured and was not.
+FORMS = ("text", "image")
+
+
+def check_form(form: str) -> str:
+    if form not in FORMS:
+        raise ValueError(f"form must be one of {FORMS}, not {form!r}")
+    return form
+
 
 @dataclass
 class Case:
@@ -869,6 +880,8 @@ def llm_proposals(machine, analogy: Analogy, client: Any = None,
     import base64
 
     from .render import png_bytes
+
+    check_form(form)
 
     if client is None:
         try:

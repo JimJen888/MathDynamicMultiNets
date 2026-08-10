@@ -287,10 +287,13 @@ def build_tools(m: RenMachine) -> dict[str, Tool]:
                                             "nothing to compare"},
            "form": {**_STR, "enum": ["text", "image"],
                     "description": "how the specific-domain cells are shown: "
-                                   "'text' (default) writes each cell out as "
-                                   "characters at the resolution it was drawn; "
-                                   "'image' sends the rendered pixels, worth it "
-                                   "when layout is genuinely pictorial"},
+                                   "'text' (the default) writes each cell out "
+                                   "as characters at the resolution it was "
+                                   "drawn; 'image' sends the rendered pixels, "
+                                   "worth it when layout is genuinely "
+                                   "pictorial. Omitting it leaves the default "
+                                   "in place unless this run was explicitly "
+                                   "started in 'image' form"},
            "show_cells": {"type": "boolean",
                           "description": "include the cells in the reply, so "
                                          "the analogy can be read here too"}},
@@ -300,7 +303,7 @@ def build_tools(m: RenMachine) -> dict[str, Tool]:
                       observed: bool = False, solved_domain: str = "",
                       solved_via: list = None, solved_expand: list = None,
                       n_solved: int = 12,
-                      form: str = "text", show_cells: bool = False) -> str:
+                      form: str = "", show_cells: bool = False) -> str:
         analogy, proposals = m.propose_rules(unsolved, solved or [],
                                              use_llm=use_llm,
                                              max_proposals=max_proposals,

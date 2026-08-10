@@ -185,6 +185,10 @@ def main() -> None:
                     help="directory the drawn expressions are written to, so what "
                          "the nets read and drew can be checked by eye")
     ap.add_argument("--no-dump", action="store_true", help="do not write any images")
+    ap.add_argument("--form", choices=["text", "image"], default="text",
+                    help="how propose_rules shows the drawn cells: text writes "
+                         "each layout out as characters (the default), image "
+                         "sends the rendered pixels. Only affects --llm runs")
     args = ap.parse_args()
 
     # 3500, not 2000. At 2000 the distributive rule's verified accuracy was a
@@ -198,7 +202,7 @@ def main() -> None:
     # See also the determinism note in train.py, which removes the run-to-run
     # drift that made the number move even at a fixed seed.
     n_train, epochs = (400, 15) if args.quick else (3500, 60)
-    machine = RenMachine(goal=GOAL, device=args.device)
+    machine = RenMachine(goal=GOAL, device=args.device, propose_form=args.form)
 
     if args.llm:
         run = LLMController(machine, max_steps=60).run(GOAL)
