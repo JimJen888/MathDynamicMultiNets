@@ -41,11 +41,12 @@ end, same `fa - fb` fusion; the head goes from `num_classes` logits to
 ```bash
 conda env create -f environment.yml      # python 3.10, numpy, torch+CUDA, pytest
 conda activate dynamicmultinet
-python -m pytest tests/ -q               # 40 tests, ~3 s
+python -m pytest tests/ -q               # 74 tests, ~5 s
 
 python examples/run_multiplication.py    # experiment 1
 python examples/run_geometry.py          # experiment 2
 python examples/run_robotics.py          # appendix A
+python examples/run_riemann.py           # experiment 4
 #   add --quick for a 30 s smoke run, --llm to let Claude drive
 ```
 
@@ -453,6 +454,49 @@ which is the part the net does learn. So the rule stays **below its own 0.85
 threshold and is never trusted**, and the machine will not let it into a
 proof. That is the intended behaviour of `verify_rule`, and it is the reason
 this appendix reports a ranking rather than a chain.
+
+**Experiment 4 — the Riemann hypothesis, and where it stops** (`run_riemann.py`)
+
+RH is not a cell: it quantifies over the zeros of an analytic function and
+nothing here can write that down. Robin's criterion is, though — RH holds iff
+`sigma(n) < e^gamma n ln ln n` for every `n > 5040` — and that is a predicate
+over the integers, exactly decidable one `n` at a time. So the machine gets a
+reader (`read_integer`, the only learned rule), composes it with four exact
+divisor-sum rules, and decides the criterion from a *drawing*:
+
+```
+dataset         rule                      n     acc    base  reading
+robin_balanced  robin_from_drawing       60   1.000   0.567  informative: +0.433
+robin_fresh     robin_from_drawing      300   1.000   1.000  VACUOUS
+robin_tail      robin_from_drawing      200   1.000   1.000  VACUOUS
+read_fresh      read_integer            300   0.997   0.030  informative: +0.967
+robin_tail      read_integer            200   0.000   0.005  informative: -0.005
+```
+
+Every accuracy is printed against the **base rate**, and that column is the
+experiment. Robin's inequality holds at every `n > 5040` anyone can enumerate,
+so a test set drawn from that range carries one label and a rule that answers
+`robin_holds` without reading anything scores 1.000 on it. The last two rows
+are the same 200 drawings scored twice: the composite is **perfect** on the
+6-digit tail while its own reader is at **0.000** there, having never seen a
+drawing that wide. A verification can be passed perfectly by a rule whose
+perception has completely failed, and only the base-rate column shows it.
+
+`robin_cases` is the honest test — Robin's 26 exceptional integers, which fail,
+balanced against integers above 5040, which pass — and on it the composite
+genuinely reads, at 1.000 against a 0.567 base rate. Proofs come out as mixed
+chains, `'5040' => 'robin_fails'` in one step from the drawing.
+
+Two things this does **not** do, both demonstrated in the run rather than
+asserted. The chain has no notion of what it is looking at: hand it a cell
+reading `zeta(s)=0` and it returns `robin_holds` with the same confidence it
+reports for a real integer, which is why the universal claim is kept out of the
+prover — posed as a cell, it gets "proved" the same way. And 560 exact
+instances do not reach a statement about infinitely many; independent
+computation has checked RH-equivalents vastly further without that ever
+becoming a proof. The machine states the remaining step as an untested transfer
+instead of folding it into a chain with a confidence, which is the behaviour
+the architecture is for.
 
 ## Layout
 

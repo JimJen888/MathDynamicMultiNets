@@ -21,6 +21,7 @@ a mis-decoded slot must fail as "not applicable", never execute.
 from __future__ import annotations
 
 import ast
+import math
 import re
 from typing import Callable
 
@@ -253,6 +254,184 @@ def make_substitute_equalities() -> PythonRule:
         "substitute_equalities", fn, ABSTRACT, ABSTRACT,
         description="substitute proven equalities into the goal statement",
         source="x=y, P(x) -> P(y)",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Divisors, and the two RH criteria that are decidable one integer at a time
+# ---------------------------------------------------------------------------
+# Robin (1984) and Lagarias (2002) are each EQUIVALENT to the Riemann
+# hypothesis, and that equivalence is prior knowledge here in exactly the sense
+# the distributive identity is: a result the machine is given, not one it
+# discovers. What the equivalence buys is the thing this architecture needs and
+# the zeta function does not otherwise offer -- a statement about zeros of an
+# analytic function, re-expressed as a predicate over the integers that is
+# EXACTLY DECIDABLE at each n. One integer at a time, RH becomes a cell the
+# machine can write down, and a chain of these rules is a proof about that cell.
+#
+# What no rule below does, and what nothing in this package can do, is discharge
+# the quantifier. Robin's criterion says the inequality holds for EVERY n>5040;
+# these rules settle it for whichever n is on the tape. The gap between those
+# two is not a missing rule, it is the whole of the problem, and `run_riemann.py`
+# puts it where the machine states it as a transfer claim rather than hiding it
+# inside a chain that reports a confidence.
+EULER_GAMMA = 0.5772156649015328606
+EXP_GAMMA = 1.7810724179901979852     # e^gamma, the constant in Robin's bound
+
+
+def divisors_of(n: int) -> list[int]:
+    """Every divisor of n, found by trial division.
+
+    BY DEFINITION, in the sense `mul_by_definition` means it: a divisor is a
+    number that divides n, and this checks exactly that. It deliberately does
+    not factor n and multiply out (p^(a+1)-1)/(p-1) over the prime powers --
+    that formula is a theorem about unique factorization, and using it here
+    would make the machine's arithmetic bedrock depend on a result it has never
+    been given. The sqrt bound is not such a result: it only says divisors come
+    in pairs d, n/d, which is immediate from the definition.
+    """
+    if n < 1:
+        raise ValueError(f"divisors are defined for positive integers, not {n}")
+    out: list[int] = []
+    d = 1
+    while d * d <= n:
+        if n % d == 0:
+            out.append(d)
+            if d != n // d:
+                out.append(n // d)
+        d += 1
+    return sorted(out)
+
+
+def sigma(n: int) -> int:
+    """sigma(n): the sum of the divisors of n."""
+    return sum(divisors_of(n))
+
+
+def harmonic(n: int) -> float:
+    return sum(1.0 / k for k in range(1, n + 1))
+
+
+@prior_rule("divisor_sum")
+def make_divisor_sum() -> PythonRule:
+    """`5040` -> `sigma(5040)=19344`. Exact, and the only arithmetic in the
+    chain that actually touches the integer.
+
+    The output carries n as well as sigma(n) because every criterion below
+    needs both, and a cell that dropped n would force the next rule to invert
+    the sum -- which is not merely expensive, it is not a function.
+    """
+
+    def fn(c: Content) -> Content | None:
+        m = re.fullmatch(r"\s*(\d+)\s*", c.text)
+        if not m:
+            return None
+        n = int(m.group(1))
+        if not 1 <= n <= 10 ** 7:       # trial division has to stay honest
+            return None
+        return Content.abstract(f"sigma({n})={sigma(n)}",
+                                derivation="sum of divisors by trial division")
+
+    return PythonRule(
+        "divisor_sum", fn, ABSTRACT, ABSTRACT,
+        description="sum the divisors of n, by definition",
+        source="n -> sigma(n)=S",
+    )
+
+
+@prior_rule("robin_ratio")
+def make_robin_ratio() -> PythonRule:
+    """`sigma(5040)=19344` -> `robin_ratio(5040)=1.790096`.
+
+    The quantity Robin's criterion is about: sigma(n) / (n * ln ln n), which the
+    hypothesis asserts stays below e^gamma for every n>5040. Splitting the ratio
+    off from the comparison is not ceremony -- the ratio is the interesting
+    number, it is what a reader wants to see next to the verdict, and keeping it
+    in its own cell means a chain that ends in the wrong verdict can be
+    diagnosed one step before the end.
+    """
+
+    def fn(c: Content) -> Content | None:
+        m = re.fullmatch(r"\s*sigma\((\d+)\)=(\d+)\s*", c.text)
+        if not m:
+            return None
+        n, s = int(m.group(1)), int(m.group(2))
+        if n < 3:                       # ln ln n <= 0; the criterion says nothing
+            return None
+        ratio = s / (n * math.log(math.log(n)))
+        return Content.abstract(f"robin_ratio({n})={ratio:.6f}",
+                                derivation="sigma(n)/(n*lnln n)")
+
+    return PythonRule(
+        "robin_ratio", fn, ABSTRACT, ABSTRACT,
+        description="the Robin quotient sigma(n)/(n ln ln n)",
+        source="sigma(n)=S -> robin_ratio(n)=r",
+    )
+
+
+@prior_rule("robin_decide")
+def make_robin_decide() -> PythonRule:
+    """`robin_ratio(5040)=1.790096` -> `robin_fails`.
+
+    5040 really does fail, and it is the largest integer known to: Robin proved
+    that RH holds if and only if 5040 is the LAST exception. So a machine that
+    reports `robin_holds` for every n it is given above 5040 has reproduced the
+    evidence for RH, and a machine that ever reported `robin_fails` above 5040
+    would have refuted it. Both outcomes are one cell wide, which is the point
+    of coming through this criterion at all.
+    """
+
+    def fn(c: Content) -> Content | None:
+        m = re.fullmatch(r"\s*robin_ratio\((\d+)\)=([\d.]+)\s*", c.text)
+        if not m:
+            return None
+        verdict = "robin_holds" if float(m.group(2)) < EXP_GAMMA else "robin_fails"
+        return Content.abstract(verdict, derivation=f"ratio vs e^gamma={EXP_GAMMA:.6f}")
+
+    return PythonRule(
+        "robin_decide", fn, ABSTRACT, ABSTRACT,
+        description="compare the Robin quotient against e^gamma",
+        source="robin_ratio(n)=r -> robin_holds|robin_fails",
+    )
+
+
+@prior_rule("lagarias_decide")
+def make_lagarias_decide() -> PythonRule:
+    """`sigma(5040)=19344` -> `lagarias_holds`.
+
+    Lagarias's criterion -- sigma(n) <= H_n + exp(H_n) ln(H_n) for every n>=1 --
+    is equivalent to RH as well, and it is here as an INDEPENDENT second route
+    to the same conclusion rather than a spare -- the "facts reasoned by other
+    existing rules" the oracle documentation asks for.
+
+    Where the two agree is itself informative and was measured, not assumed.
+    Above 5040 they agree on every integer checked (3..40000: zero
+    disagreements). At or below 5040 they disagree on exactly 26 values -- 3, 4,
+    5, 6, 8, 9, 10, 12, 16, 18, 20, 24, 30, 36, 48, 60, 72, 84, 120, 180, 240,
+    360, 720, 840, 2520, 5040 -- which is Robin's exceptional set with n=2
+    omitted, because ln ln 2 is negative and `robin_ratio` declines it rather
+    than emit a ratio whose sign inverts the comparison. That divergence is the
+    expected one and it is what makes the pair a real cross-check: Lagarias has
+    NO exceptional set, so agreement above 5040 is a conclusion the two routes
+    reach separately, while a disagreement up there would mean one of these
+    rules is wrong.
+    """
+
+    def fn(c: Content) -> Content | None:
+        m = re.fullmatch(r"\s*sigma\((\d+)\)=(\d+)\s*", c.text)
+        if not m:
+            return None
+        n, s = int(m.group(1)), int(m.group(2))
+        if n < 2:                       # H_1 = 1, ln H_1 = 0; the bound is tight
+            return None
+        h = harmonic(n)
+        verdict = "lagarias_holds" if s <= h + math.exp(h) * math.log(h) else "lagarias_fails"
+        return Content.abstract(verdict, derivation="sigma(n) vs H_n+exp(H_n)ln H_n")
+
+    return PythonRule(
+        "lagarias_decide", fn, ABSTRACT, ABSTRACT,
+        description="compare sigma(n) against Lagarias's harmonic bound",
+        source="sigma(n)=S -> lagarias_holds|lagarias_fails",
     )
 
 

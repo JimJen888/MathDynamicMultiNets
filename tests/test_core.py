@@ -1014,5 +1014,91 @@ def test_tool_errors_come_back_as_text_not_exceptions():
     assert run.transcript[2].startswith("ERROR")
 
 
+# ---------------------------------------------------------------------------
+# The RH criteria (examples/run_riemann.py)
+# ---------------------------------------------------------------------------
+def test_divisor_sum_matches_values_known_independently():
+    from dynamicmultinets.prior import sigma
+
+    assert sigma(1) == 1
+    assert sigma(6) == 12 and sigma(28) == 56          # perfect numbers
+    assert sigma(5040) == 19344                        # 31*13*6*8
+
+
+def test_robin_criterion_finds_exactly_the_known_exceptional_set():
+    """Robin's inequality fails at 27 integers and nowhere else below 5040.
+
+    n=2 is in the published list and absent here on purpose: ln ln 2 is
+    negative, so the ratio's sign flips and the comparison would not mean what
+    it means everywhere else. `robin_ratio` declines n<3 rather than emit it.
+    """
+    import math
+
+    from dynamicmultinets.prior import EXP_GAMMA, sigma
+
+    fails = {n for n in range(3, 20001)
+             if sigma(n) / (n * math.log(math.log(n))) >= EXP_GAMMA}
+    assert fails == {3, 4, 5, 6, 8, 9, 10, 12, 16, 18, 20, 24, 30, 36, 48, 60,
+                     72, 84, 120, 180, 240, 360, 720, 840, 2520, 5040}
+
+
+def test_the_two_criteria_agree_above_5040_and_diverge_only_below():
+    """Two independent routes to the same conclusion, which is the point of
+    keeping both: a disagreement above 5040 would mean one of them is wrong."""
+    m = RenMachine(with_prior=True)
+    lib = m.library
+
+    def verdicts(n):
+        s = lib.get("divisor_sum").apply(Content.abstract(str(n)))
+        robin = lib.get("robin_decide").apply(lib.get("robin_ratio").apply(s))
+        return robin.text == "robin_holds", \
+            lib.get("lagarias_decide").apply(s).text == "lagarias_holds"
+
+    assert all(verdicts(n)[0] == verdicts(n)[1] for n in range(5041, 7000))
+    below = [n for n in range(3, 5041) if verdicts(n)[0] != verdicts(n)[1]]
+    assert len(below) == 26 and below[0] == 3 and below[-1] == 5040
+
+
+def test_the_chain_from_an_integer_to_a_verdict_is_exact():
+    m = RenMachine(with_prior=True)
+    p = m.prove("5040", "robin_fails", max_depth=5)
+    assert p.found and p.confidence == 1.0        # every link is a PythonRule
+    assert m.prove("10080", "robin_holds", max_depth=5).found
+
+
+def test_robin_verdict_above_5040_is_a_vacuous_verification_target():
+    """The reason `robin_cases` exists. A test set of integers above 5040
+    carries one label, so any constant answer scores 1.000 on it and the
+    accuracy reports the base rate rather than the rule."""
+    from collections import Counter
+
+    from dynamicmultinets import generators, oracles
+    from dynamicmultinets.verify import answer_text
+
+    flat = generators.generate("rendered_integers", 80, seed=11,
+                               min_digits=4, max_digits=5, above=5040)
+    oracles.label(flat, "robin_verdict")
+    assert len(Counter(answer_text(e.out) for e in flat.examples if e.labeled)) == 1
+
+    balanced = generators.generate("robin_cases", 60, seed=3)
+    oracles.label(balanced, "robin_verdict")
+    counts = Counter(answer_text(e.out) for e in balanced.examples if e.labeled)
+    assert set(counts) == {"robin_holds", "robin_fails"}
+    assert max(counts.values()) / sum(counts.values()) < 0.7
+
+
+def test_the_divisor_chain_cannot_tell_that_a_cell_is_not_an_integer():
+    """Guards the claim run_riemann.py makes about why the universal statement
+    must not be posed as a cell: the chain declines a non-numeric cell only
+    because `divisor_sum` pattern-matches digits, and anything a reader turns
+    into digits gets a verdict regardless of what was drawn."""
+    m = RenMachine(with_prior=True)
+    assert m.library.get("divisor_sum").apply(Content.abstract("zeta(s)=0")) is None
+    # ...but any digits at all are accepted, with no notion of whether they
+    # were a faithful reading of the drawing.
+    got = m.library.get("divisor_sum").apply(Content.abstract("847213"))
+    assert got is not None and got.text.startswith("sigma(847213)=")
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

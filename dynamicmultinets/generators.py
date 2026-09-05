@@ -21,6 +21,7 @@ reproduce it.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -158,6 +159,85 @@ def _rendered_expressions(n: int, rng: np.random.Generator, max_terms: int = 2,
         out.append(Example(inp=Content.specific_text(text),
                            meta={"truth": text}))
     return out
+
+
+@generator(
+    "rendered_integers",
+    "single integers drawn on the specific tape -- training data for a reader "
+    "whose output is fed to the divisor-sum rules",
+    {"min_digits": "shortest integer to draw (default 1)",
+     "max_digits": "longest integer to draw (default 5)",
+     "above": "draw only integers strictly greater than this (default 0), which "
+              "is how the Robin range n>5040 is asked for"},
+)
+def _rendered_integers(n: int, rng: np.random.Generator, min_digits: int = 1,
+                       max_digits: int = 5, above: int = 0) -> list[Example]:
+    # Digit LENGTH is sampled first, then a value of that length. Sampling
+    # uniformly from [10^min, 10^max] instead would put ~90% of the mass on the
+    # longest length, and a reader trained that way is worst at exactly the
+    # short inputs whose divisor sums are cheapest to check by hand.
+    out = []
+    while len(out) < n:
+        k = int(rng.integers(min_digits, max_digits + 1))
+        lo, hi = 10 ** (k - 1), 10 ** k - 1
+        v = int(rng.integers(max(lo, 1), hi + 1))
+        if v <= above:
+            continue
+        text = str(v)
+        out.append(Example(inp=Content.specific_text(text), meta={"truth": text}))
+    return out
+
+
+@generator(
+    "robin_cases",
+    "integers whose Robin verdict actually VARIES -- the exceptional integers "
+    "that fail the inequality, balanced against integers above 5040 that pass",
+    {"fail_fraction": "share of cases drawn from the exceptional set (default 0.5)",
+     "max_digits": "longest passing integer to draw (default 5)"},
+)
+def _robin_cases(n: int, rng: np.random.Generator, fail_fraction: float = 0.5,
+                 max_digits: int = 5) -> list[Example]:
+    """Why this generator has to exist, and it is not a detail.
+
+    `rendered_integers(above=5040)` labelled by `robin_verdict` produces 300
+    cases and 300 identical labels, because Robin's inequality is believed to
+    hold at every n>5040 and certainly does over any range we can enumerate. A
+    rule verified on that family scores 1.000 by answering "robin_holds" and
+    never reading anything -- measured, not hypothesised: a reader at 0.133
+    character accuracy drove the composite to a perfect score on exactly that
+    set. The dataset was vacuous, and the accuracy number was reporting the base
+    rate of its own labels.
+
+    The only integers that make the verdict informative are the ones that FAIL,
+    and Robin's theorem is precisely the statement that there are finitely many:
+    26 of them at n>=3 (n=2 is excluded because ln ln 2 is negative and the
+    ratio is not defined in the intended direction). So the discriminating half
+    of any Robin test set is capped at 26 distinct cases, and this generator
+    emits each at most once rather than resampling to a requested size -- the
+    same drawing repeated does not add evidence, it only inflates a denominator.
+
+    The exceptional set is FOUND here, by evaluating the criterion, not pasted
+    in from the literature. If the machine's arithmetic disagreed with Robin,
+    that disagreement should surface as a different test set rather than be
+    hidden by a hard-coded list that papers over it.
+    """
+    from .prior import EXP_GAMMA, sigma
+
+    exceptional = [k for k in range(3, 5041)
+                   if sigma(k) / (k * math.log(math.log(k))) >= EXP_GAMMA]
+    n_fail = min(len(exceptional), int(round(n * fail_fraction)))
+    fails = list(rng.permutation(exceptional))[:n_fail]
+
+    holds: list[int] = []
+    hi = 10 ** max_digits - 1
+    while len(holds) < n - n_fail:
+        holds.append(int(rng.integers(5041, hi + 1)))
+
+    out = []
+    for v in fails + holds:
+        text = str(v)
+        out.append(Example(inp=Content.specific_text(text), meta={"truth": text}))
+    return [out[i] for i in rng.permutation(len(out))]
 
 
 # ---------------------------------------------------------------------------

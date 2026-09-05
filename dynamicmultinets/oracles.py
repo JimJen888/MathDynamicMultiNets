@@ -27,6 +27,7 @@ worth learning ("it finds that actually the equation holds true").
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Callable, Sequence
@@ -34,7 +35,7 @@ from typing import Callable, Sequence
 import numpy as np
 
 from .dataset import Example, ExampleSet
-from .prior import eval_int_expression
+from .prior import EXP_GAMMA, eval_int_expression, harmonic, sigma
 from .tapes import Content
 
 # Quoted so the alias is a ForwardRef rather than a runtime `|` on 3.8/3.9.
@@ -164,6 +165,57 @@ def _distributive_rewrite_right(ex: Example) -> Content | None:
 def _read_back(ex: Example) -> Content | None:
     truth = ex.meta.get("truth") or ex.inp.text
     return Content.abstract(truth) if truth else None
+
+
+# ---------------------------------------------------------------------------
+# The Riemann hypothesis, one integer at a time
+# ---------------------------------------------------------------------------
+# `definitional` is the right kind for both of these and it is worth saying why,
+# because it is a stronger claim than any other oracle here makes. These do not
+# sample, estimate, or consult a rule: given n they enumerate the divisors of n
+# and evaluate an inequality, so their label is correct for that n in the same
+# way `mul_by_definition` is correct. That is the paper's "deduction as the
+# strict limit of an empirical rule" made literal -- a rule verified at 1.00
+# against one of these has been checked exactly, on every instance it was shown.
+#
+# It also fixes precisely how far that gets. The oracle is exact ABOUT AN
+# INSTANCE. Robin's criterion is a statement about all n>5040, and no number of
+# exact instance labels closes that gap, which is why the run that uses these
+# ends in a transfer claim the machine reports and cannot test.
+ROBIN_VERDICTS = ("robin_holds", "robin_fails")
+LAGARIAS_VERDICTS = ("lagarias_holds", "lagarias_fails")
+
+
+def _integer_of(ex: Example) -> int | None:
+    truth = ex.meta.get("truth") or ex.inp.text
+    return int(truth) if str(truth).strip().isdigit() else None
+
+
+@oracle("robin_verdict",
+        "whether sigma(n) < e^gamma n ln ln n at this n -- Robin's criterion, "
+        "which holds for every n>5040 if and only if RH does",
+        "definitional", ROBIN_VERDICTS)
+def _robin_verdict(ex: Example) -> Content | None:
+    n = _integer_of(ex)
+    if n is None or n < 3:              # ln ln n <= 0: the criterion is silent
+        return None
+    ratio = sigma(n) / (n * math.log(math.log(n)))
+    return Content.abstract(ROBIN_VERDICTS[0] if ratio < EXP_GAMMA
+                            else ROBIN_VERDICTS[1])
+
+
+@oracle("lagarias_verdict",
+        "whether sigma(n) <= H_n + exp(H_n) ln H_n at this n -- Lagarias's "
+        "criterion, equivalent to RH and with no exceptional set",
+        "definitional", LAGARIAS_VERDICTS)
+def _lagarias_verdict(ex: Example) -> Content | None:
+    n = _integer_of(ex)
+    if n is None or n < 2:
+        return None
+    h = harmonic(n)
+    return Content.abstract(LAGARIAS_VERDICTS[0]
+                            if sigma(n) <= h + math.exp(h) * math.log(h)
+                            else LAGARIAS_VERDICTS[1])
 
 
 # ---------------------------------------------------------------------------
