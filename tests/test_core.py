@@ -973,6 +973,57 @@ def test_the_increment_identity_is_proved_not_measured():
     assert not refused.established and not broken.exact
 
 
+def test_the_carrier_balance_holds_for_every_epsilon():
+    """Section 7.2 needs the viscous coefficient in [1, 4] at any eps the
+    construction picks, which is a continuum and so was never in reach of
+    an instance. The argument is elementary and the machine carries it
+    out: a factorisation whose sign linear arithmetic decides, plus the
+    single case k = 1."""
+    from fractions import Fraction
+
+    from dynamicmultinets.navierstokes import install_navier_stokes_rules
+
+    m = RenMachine()
+    install_navier_stokes_rules(m.library)
+    report = m.prove_rule("ns_carrier_frequency",
+                          "carrier_balance_by_factorisation")
+    assert report.established and report.judgement.whole_domain
+    rule = m.library.get("ns_carrier_frequency")
+    assert rule.exact and rule.proved
+
+    # The proof bounds the coefficient. A rule sitting on that true bound
+    # while comparing against a narrower window is still wrong, and the
+    # prover has to notice, so it probes the ends of the achievable range.
+    import math
+
+    m2 = RenMachine()
+    install_navier_stokes_rules(m2.library)
+    narrowed = m2.library.get("ns_carrier_frequency")
+
+    def window_to_two(c):
+        text = c.text.replace(" ", "")
+        if not text.startswith("eps="):
+            return None
+        eps = Fraction(text[4:])
+        if not 0 < eps <= 1:
+            return None
+        k = math.ceil(math.sqrt(1.0 / float(eps)))
+        while Fraction(k * k) * eps < 1:
+            k += 1
+        while k > 1 and Fraction((k - 1) ** 2) * eps >= 1:
+            k -= 1
+        damping = eps * k * k
+        verdict = ("viscosity_stays_in_pulse_equation" if 1 <= damping <= 2
+                   else "viscous_balance_lost")
+        return Content.abstract(f"{verdict},k={k},epsk2={damping}")
+
+    narrowed.fn = window_to_two
+    refused = m2.prove_rule("ns_carrier_frequency",
+                            "carrier_balance_by_factorisation")
+    assert not refused.established and not narrowed.proved
+    assert "narrower than the theorem" in refused.judgement.obstruction
+
+
 def test_the_stage_induction_is_proved_and_its_budget_derived():
     """Proposition 9.6 quantifies over every correction stage, which no
     number of instances reaches. It also quantifies over a rational

@@ -1,5 +1,5 @@
 """
-Experiment 7: re-deriving the Navier-Stokes blowup construction as rules.
+Experiment 1: re-deriving the Navier-Stokes blowup construction as rules.
 
 The OpenAI preprint constructs, for every viscosity, a smooth compactly
 supported force and a solution from rest whose kinetic energy stays bounded
@@ -240,6 +240,10 @@ def plan(scale: float) -> list[tuple[str, dict]]:
     # says PROVED for them instead of trusted.
     for rule, prover_name in NORM_PROOFS:
         steps.append(("prove_rule", {"rule": rule, "prover": prover_name}))
+    # And the viscous balance of Section 7.2, which is uniform over a
+    # continuum of eps and so was never in reach of an instance either.
+    steps.append(("prove_rule", {"rule": "ns_carrier_frequency",
+                                 "prover": "carrier_balance_by_factorisation"}))
 
     steps.append(("library_report", {}))
     for name in INSTANCES:
@@ -438,8 +442,23 @@ def report_what_was_proved(machine: RenMachine) -> None:
     rule = machine.library.get("prop_9_6_all_stages")
     print(f"     exact {rule.exact}, confidence {rule.confidence():.4f}")
 
-    print("\n  Confidence 1.0000 on those two is not a thousand agreements")
-    print("  rounded up. There are no instances in either of them, which is")
+    carrier = machine.library.get("ns_carrier_frequency")
+    print(f"\n  3. The viscous balance of Section 7.2 "
+          f"[{'PROVED' if carrier.proved else 'NOT PROVED'}]")
+    print("     1 <= eps*k^2 <= 4 for EVERY eps in (0,1], with k the carrier")
+    print("     frequency ceil(eps^-1/2). A continuum, so no number of")
+    print("     instances reaches it, and the argument is three lines: the")
+    print("     lower bound is a condition the rule enforces, the upper one")
+    print("     is 4(k-1)^2 - k^2 = (3k-2)(k-2) with both factors positive")
+    print("     for k >= 2, and k = 1 pins eps = 1.")
+    print("     One consequence is worth printing on its own: the rule's")
+    print("     viscous_balance_lost branch is UNREACHABLE. No number of")
+    print("     instances could have exercised it, so its base rate was")
+    print("     never going to be informative and the proof is the only")
+    print("     thing that could have said so.")
+
+    print("\n  Confidence 1.0000 on those three is not a thousand agreements")
+    print("  rounded up. There are no instances in any of them, which is")
     print("  why the library prints them as PROVED and not as trusted.")
 
     print("\n  What this does NOT reach, and why the theorem is still not")
@@ -452,7 +471,10 @@ def report_what_was_proved(machine: RenMachine) -> None:
              "way, and its coefficients are not"),
             ("every dyadic band", "REACHED by derivation below, given "
              "Bernstein: the dyadic sum is decided by its exponent"),
-            ("every slow label", "out of reach: no decidable structure here"),
+            ("every slow label", "NOT established: the phrase covers the "
+             "construction's continuous slow variables and no decision "
+             "procedure here touches them. The nearest labelled uniformity, "
+             "the carrier frequency over every eps, is proved above"),
             ("every concentration scale q as q -> 0",
              "REACHED by derivation below: a limit decided by the sign of "
              "one exponent")):

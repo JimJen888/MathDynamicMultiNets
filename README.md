@@ -41,15 +41,15 @@ end, same `fa - fb` fusion; the head goes from `num_classes` logits to
 ```bash
 conda env create -f environment.yml      # python 3.10, numpy, torch+CUDA, pytest
 conda activate dynamicmultinet
-python -m pytest tests/ -q               # 94 tests, ~24 s
+python -m pytest tests/ -q               # 107 tests, ~25 s
 
-python examples/run_multiplication.py    # experiment 1
-python examples/run_geometry.py          # experiment 2
+python examples/run_navier_stokes.py     # experiment 1
+python examples/run_multiplication.py    # experiment 2
+python examples/run_geometry.py          # experiment 3
 python examples/run_robotics.py          # appendix A
 python examples/run_riemann.py           # experiment 4
 python examples/run_montgomery.py        # experiment 5
-python examples/run_finite_height.py      # experiment 6
-python examples/run_navier_stokes.py      # experiment 7
+python examples/run_finite_height.py     # experiment 6
 #   add --quick for a 30 s smoke run, --llm to let Claude drive
 ```
 
@@ -83,7 +83,7 @@ detects, the same convention as `DetourPredictor`. Pass `--device cpu` (or
 to match exactly: cuDNN kernels do not reproduce CPU kernels bit-for-bit even
 under the same seed, so the two devices are different random draws of the same
 procedure. Every run prints which device it chose. The speedup is real but
-modest — experiment 1 is 2m04s on a 4090 against ~8 min on CPU — because the
+modest — experiment 2 is 2m04s on a 4090 against ~8 min on CPU — because the
 nets are small and scene generation, glyph rendering and pixel quantization
 stay on the CPU in numpy. On `--quick` runs the two are indistinguishable.
 
@@ -332,9 +332,10 @@ that "looks fine".
 
 ## Results
 
-Default settings, single runs, no cherry-picking. Times are on one RTX 4090
-(2m04s for experiment 1, 4m01s for experiment 2, 4m15s for appendix A); the
-same runs on CPU take a few times longer and land in the same place.
+Default settings, single runs, no cherry-picking. Experiment 1 trains nothing
+and asks for no GPU: it is 2m32s of oracle time on CPU. The rest are on one
+RTX 4090 (2m04s for experiment 2, 4m01s for experiment 3, 4m15s for appendix
+A); the same runs on CPU take a few times longer and land in the same place.
 
 **Experiment 1 — a published construction, rebuilt as rules**
 (`run_navier_stokes.py`)
@@ -400,8 +401,8 @@ correction stages, 323 moment families. `verify` now counts distinct inputs
 (pixels where there are pixels, since two renderings of the same caption are
 two questions for a rule that reads them) and charges the rule once per
 question, printing a `NARROW` warning when the repeats outnumber the
-questions four to one. The arithmetic experiment was affected too: 120
-rendered products are 62 distinct expressions.
+questions four to one. The multiplication experiment below was affected
+too: 120 rendered products are 62 distinct expressions.
 
 The generators were then widened until more instances meant more questions —
 the increment oracle now builds its potentials from an index, so each cell is
@@ -530,7 +531,7 @@ one of the checked moves, verified by building fields, differentiating them,
 and confirming that an increment which is *not* divergence-free leaves the
 `w div(w)` term behind.
 
-### Two steps that are proved, and why only two
+### Three steps that are proved, and why only three
 
 Everything above is sampling. A rule is asked questions and compared with an
 oracle, which settles it on the questions asked and says nothing about the
@@ -538,9 +539,9 @@ rest — right for a rule that reads pixels or integrates a field, and wrong
 for a rule whose content is a statement about every case. That is why the
 imported steps stay untrusted however many instances agree.
 
-Two of the paper's derivations are not estimates at all, and both are
-plain enough to carry out here rather than import. One is an identity and
-one is a recursion.
+Three of the paper's derivations are not estimates at all, and all three
+are plain enough to carry out here rather than import. One is an identity,
+one is a recursion, and one is an elementary inequality over a continuum.
 
 **The increment identity of Section 3.3.** Everything in Sections 7 and 9
 rests on
@@ -673,6 +674,32 @@ is still absent is the estimate: Theorem 4.6 and Propositions 5.5, 7.5 and
 9.9 are not corollaries of these inequalities, and no chain of them
 produces one.
 
+**The viscous balance of Section 7.2.** The carrier frequency is
+`k = ⌈ε^{-1/2}⌉`, and the construction needs `1 ≤ εk² ≤ 4` so that
+viscosity neither drops out of the amplitude equation nor swamps the shear
+amplification. That has to hold at *any* ε the construction picks, which is
+a continuum, so instances were never going to reach it. The argument is
+three lines. The rule now enforces the two conditions that define the
+ceiling before it answers, so the lower bound is immediate; the upper one
+follows from
+
+    4(k−1)² − k² = (3k−2)(k−2),
+
+expanded here as a polynomial identity rather than quoted, with both
+factors non-negative for `k ≥ 2` by linear arithmetic; and `k = 1` pins
+`ε = 1`.
+
+That proof also settles something no amount of running could have. The
+rule's `viscous_balance_lost` branch is **unreachable**, so its base rate
+was never going to be informative, and only a proof could say so.
+
+Bounding the coefficient is only half of deciding the rule, and the first
+version of this prover missed the other half: a rule that had narrowed its
+acceptance window would still have been sitting on a true theorem while
+giving the wrong verdict. The coefficient is `4ε` across `[1/4, 1)`, so its
+achievable values fill `[1, 4)`, and the prover now probes both ends of
+that. A window narrowed to `[1, 2]` is refused, and that is a test.
+
 What this does not reach is the whole of the rest. The construction
 quantifies over five things:
 
@@ -680,10 +707,11 @@ quantifies over five things:
 |---|---|
 | every correction stage j | **proved** — a rational recursion on an integer index |
 | every point of every smooth field, for the increment identity | **proved** — a polynomial identity in the one-jet |
+| every ε in (0, 1], for the viscous balance | **proved** — a factorisation whose sign linear arithmetic decides |
 | every order of the background expansion | the schedule is decidable the same way; the coefficient bounds it is fed are not |
 | every dyadic band | **reached by derivation**, given Bernstein: the dyadic sum is decided by its exponent |
 | every concentration scale q as q → 0 | **reached by derivation**: a limit decided by the sign of one exponent |
-| every slow label | out of reach — no decidable structure here |
+| every slow label | **not established** — the phrase is my own shorthand for the construction's continuous slow variables, and no procedure here touches them |
 
 So the answer to "can the proof be finished here" is still no, and the
 reason has moved twice. It is not that more instances are needed. Where the
@@ -725,8 +753,8 @@ rule answers confidently far outside any shear a profile can produce, and
 11160 decided instances do not reach a statement quantified over every scale,
 band, label and correction stage.
 
-The perception half is the same story as everywhere else here. Drawn on the
-specific tape, the exponent cell is read by `transcribe_unsafe` and the
+The perception half is the same story it is everywhere in this package.
+Drawn on the specific tape, the exponent cell is read by `transcribe_unsafe` and the
 five-step chain to the energy verdict goes through; marked `observed`, nothing
 in the library can start, and the reader that would close it is exactly what
 this run does not build.
@@ -759,7 +787,7 @@ that share no machinery agreeing to four digits is what verification is for.
 All four benchmark tasks solved, `J = 15816 bits` over 11 rules and 6 rule
 applications, including `'12*30' (drawn, unlabelled) → '360'` in two steps at
 confidence **0.9803** — a chain that leaves the specific domain and comes back.
-Unlike the construction loop in experiment 2, nothing here is applied to its
+Unlike the construction loop in experiment 3, nothing here is applied to its
 own output more than once, so the chain is two links long and the reader's
 0.9867 is most of what the confidence is made of.
 
@@ -1027,12 +1055,25 @@ dynamicmultinets/
                  compared in the specific domain
   train.py       fitting a rule; hard-case mining; specialists
   verify.py      trust, grounding strength, counterexamples
+  provers.py     the third way a rule earns its standing: decided on its
+                 whole domain rather than sampled, so `exact` and not
+                 `accurate`. Narrow on purpose
+  linarith.py    linear arithmetic over an index -- decides the correction
+                 cycle's induction and derives its budget
+  symalg.py      exact polynomial algebra -- settles pointwise identities by
+                 expanding them in the one-jet
+  normcalc.py    function space norms as rules: exponents derived from
+                 scaling, analytic content assumed by name
   proof.py       best-first search over rule chains, across domains
   compose.py     composition, distillation, the objective J, simplification
   halting.py     the statistical anytime algorithm (§5)
   machine.py     RenMachine: state + operations
   tools.py       the controller's instruction set
   controller.py  LLM controller and its offline twin
+
+  navierstokes.py  experiment 1: the construction's decidable content
+  nsmechanisms.py  the imported estimates, with their methods carried out
+  nsderivation.py  the derivation as chaining rules, and the stage induction
 ```
 
 ## Notes on faithfulness

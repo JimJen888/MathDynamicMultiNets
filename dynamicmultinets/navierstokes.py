@@ -100,6 +100,9 @@ from typing import Callable
 import numpy as np
 
 from .dataset import Example
+from .linarith import Lin, obligations, short, solve
+from .provers import Judgement, prover
+from .symalg import Poly
 from .generators import generator
 from .oracles import oracle
 from .prior import PRIOR_RULES
@@ -386,6 +389,117 @@ def make_ns_band_cancel() -> PythonRule:
                       source="h=H->Qpower")
 
 
+@prover("carrier_balance_by_factorisation",
+        "proves the viscous coefficient stays in [1, 4] for EVERY eps in "
+        "(0, 1], by splitting on the carrier frequency and factorising the "
+        "resulting quadratic")
+def _prove_carrier_balance(library, rule) -> Judgement:
+    """Section 7.2's balance, for every eps rather than the ones sampled.
+
+    The rule computes k = ceil(eps^-1/2) and reports whether eps*k^2 lands
+    in [1, 4]. That is a pointwise computation, and the claim behind it is
+    uniform: the viscosity must neither drop out of the amplitude equation
+    nor swamp the shear amplification, at ANY eps the construction picks.
+    A continuum is not something instances reach, and it does not have to
+    be, because the argument is three lines.
+
+    The rule enforces the two conditions that define the ceiling before it
+    answers, so any k it emits satisfies
+
+        eps * k^2 >= 1        and        eps * (k-1)^2 < 1  (for k >= 2).
+
+    The lower bound is the first of those, immediately. For the upper
+    bound, the second gives eps < 1/(k-1)^2, so eps*k^2 < k^2/(k-1)^2, and
+
+        4 (k-1)^2 - k^2 = (3k - 2)(k - 2),
+
+    which is an identity, checked here by expansion rather than asserted.
+    Both factors are non-negative linear forms in k for k >= 2, which
+    linear arithmetic decides, so k^2/(k-1)^2 <= 4 for every such k. That
+    leaves k = 1, where the rule's own condition forces eps >= 1 and the
+    domain forces eps <= 1, so eps = 1 and the coefficient is exactly 1.
+
+    Nothing in that is sampled and no eps is chosen anywhere in it.
+    """
+    if rule.name != "ns_carrier_frequency":
+        return Judgement(False, obstruction=(
+            f"{rule.name} is not the carrier frequency rule"))
+
+    # The factorisation, expanded rather than quoted.
+    k = Poly.sym("k")
+    left = Poly.constant(4) * (k - 1) * (k - 1) - k * k
+    right = (Poly.constant(3) * k - 2) * (k - 2)
+    if not (left - right).is_zero:
+        return Judgement(False, obstruction=(
+            f"4(k-1)^2 - k^2 does not expand to (3k-2)(k-2); the difference "
+            f"is {left - right}"))
+
+    # Both factors non-negative for every integer k >= 2.
+    with obligations() as obs:
+        short(Lin.var("m") * 3 + 4, Lin(Fraction(0)), "3k - 2 at k = m + 2")
+        short(Lin.var("m"), Lin(Fraction(0)), "k - 2 at k = m + 2")
+    region = solve(obs)
+    if not region.feasible:
+        return Judgement(False, obstruction=(
+            "a factor changes sign on k >= 2: " + "; ".join(region.blocking[:2])))
+
+    # k = 1 is the one case the algebra does not cover, and the rule's own
+    # condition pins it: eps * 1 >= 1 with eps <= 1 leaves eps = 1.
+    at_one = rule.apply(Content.abstract("eps=1"))
+    if at_one is None or "k=1" not in at_one.text or "epsk2=1" not in at_one.text:
+        return Judgement(False, obstruction=(
+            f"at eps = 1 the rule says {at_one.text if at_one else 'nothing'}, "
+            f"and the argument needs k = 1 with coefficient exactly 1"))
+
+    # The algebra bounds the COEFFICIENT. It says nothing about the window
+    # the rule compares it against, and a rule that had narrowed that
+    # window would still be sitting on a true theorem while giving the
+    # wrong verdict. The coefficient is 4*eps on the whole of [1/4, 1), so
+    # its achievable values fill [1, 4); probing the rule at both ends of
+    # that and in between confirms its window covers what the theorem
+    # allows, which is the other half of deciding the rule.
+    span = [Fraction(1), Fraction(1, 4), Fraction(1, 2), Fraction(3, 4),
+            Fraction(9, 10), Fraction(10 ** 6 - 1, 10 ** 6)]
+    for eps in span:
+        got = rule.apply(Content.abstract(f"eps={sf(eps)}"))
+        if got is None:
+            return Judgement(False, obstruction=(
+                f"the rule declines eps = {sf(eps)}, which is in its domain"))
+        coefficient = Fraction(got.text.split("epsk2=")[1])
+        if not (1 <= coefficient <= 4):
+            return Judgement(False, obstruction=(
+                f"at eps = {sf(eps)} the coefficient is {sf(coefficient)}, "
+                f"outside the interval the argument proves"))
+        if not got.text.startswith("viscosity_stays_in_pulse_equation"):
+            return Judgement(False, obstruction=(
+                f"at eps = {sf(eps)} the coefficient is {sf(coefficient)}, "
+                f"which the argument allows, and the rule rejects it -- its "
+                f"acceptance window is narrower than the theorem"))
+
+    return Judgement(
+        True,
+        statement=("for every eps in (0, 1] the carrier frequency "
+                   "k = ceil(eps^-1/2) gives 1 <= eps*k^2 <= 4, so the "
+                   "viscous coefficient of Section 7.2 neither vanishes nor "
+                   "swamps the amplitude equation at any eps"),
+        covers=("every rational eps in (0, 1], which is the rule's whole "
+                "domain, and every carrier frequency it can produce"),
+        whole_domain=True,
+        detail=[
+            "lower bound: eps*k^2 >= 1 is one of the two conditions the "
+            "rule enforces before answering",
+            "upper bound: 4(k-1)^2 - k^2 = (3k-2)(k-2), expanded here as a "
+            "polynomial identity, with both factors non-negative for k >= 2",
+            "k = 1 is the remaining case and pins eps = 1 exactly",
+            "the coefficient is 4*eps across [1/4, 1), so its achievable "
+            "values fill [1, 4) and the rule's window is checked against "
+            "both ends of that rather than against the midpoint",
+            "a consequence worth stating: the rule's viscous_balance_lost "
+            "branch is now known to be unreachable, so no number of "
+            "instances could ever have exercised it",
+        ])
+
+
 @ns_rule("ns_carrier_frequency")
 def make_ns_carrier_frequency() -> PythonRule:
     """`eps=1/64` -> whether viscosity stays in the leading pulse equation.
@@ -408,6 +522,14 @@ def make_ns_carrier_frequency() -> PythonRule:
             k += 1
         while k > 1 and Fraction((k - 1) ** 2) * eps >= 1:
             k -= 1
+        # The two conditions that DEFINE the ceiling, enforced rather than
+        # left to the loop above. Stating them here is what lets the prover
+        # argue from them: it reasons about any k with these properties,
+        # and every k this rule emits has them by the guard, so there is no
+        # step where a claim about the loop has to be taken on trust.
+        if not (Fraction(k * k) * eps >= 1
+                and (k == 1 or Fraction((k - 1) ** 2) * eps < 1)):
+            return None
         damping = eps * k * k
         verdict = ("viscosity_stays_in_pulse_equation"
                    if 1 <= damping <= 4 else "viscous_balance_lost")
