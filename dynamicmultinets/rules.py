@@ -154,6 +154,13 @@ class Rule(ABC):
         # this rule on its whole input domain. Empty for every rule whose
         # standing rests on instances, which is almost all of them.
         self.proved = ""
+        # Classical facts this rule leans on but does not establish. Empty
+        # for nearly everything here; the norm calculus in `normcalc` is
+        # where it matters, because an exponent computed exactly on top of
+        # an unstated assumption is the most misleading thing this package
+        # could print. `normcalc.assumptions_behind` reads these back out
+        # of a finished chain.
+        self.assumes: tuple[str, ...] = ()
 
     # -- behaviour -----------------------------------------------------------
     @abstractmethod
@@ -801,6 +808,8 @@ class RuleLibrary:
             # something on a lot of instances; a proved one was decided.
             flag = ("PROVED" if r.proved else "trusted" if r.trusted
                     else f"NOT TRUSTED, {r.stats.summary()}")
+            if r.assumes and r.trusted:
+                flag += f" (assumes {len(r.assumes)})"
             rows.append(f"{r.name:<26}{mapping:<22}{r.cost_bits():>8.0f}  "
                         f"{r.confidence():>5.2f}  {flag}")
         return "\n".join(rows)

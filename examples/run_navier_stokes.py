@@ -50,6 +50,7 @@ themselves are untouched.
 from __future__ import annotations
 
 import argparse
+from fractions import Fraction
 import sys
 from collections import Counter
 from pathlib import Path
@@ -64,6 +65,9 @@ from dynamicmultinets.navierstokes import (                          # noqa: E40
 from dynamicmultinets.nsmechanisms import (                         # noqa: E402
     MECHANISM_CHECKS, MECHANISM_MUTATIONS, REMAINING, SUPPORTS,
     install_mechanism_rules)
+from dynamicmultinets.normcalc import (                            # noqa: E402
+    RESIDUAL_START, RESIDUAL_TARGET, assumptions_behind, est, glob,
+    install_norm_rules, pair, vanishes)
 from dynamicmultinets.nsderivation import (                         # noqa: E402
     CYCLE_MOVES, DERIVATION_CHECKS, DERIVATION_IMPORTED, DERIVATION_LEGS,
     DERIVATION_MUTATIONS, initial_state, install_derivation_rules,
@@ -130,6 +134,15 @@ INSTANCES = {
     "cycle_instance": ("stage=40", "sigma=21/5"),
     "energy_instance": (f"h={H}", VERDICT),
 }
+
+
+NORM_PROOFS = (
+    ("bernstein_derivative", "band_exponents_by_scaling"),
+    ("bernstein_uniform", "band_exponents_by_scaling"),
+    ("bernstein_to_energy", "band_exponents_by_scaling"),
+    ("sum_over_bands", "summation_and_limit_by_sign"),
+    ("limit_at_the_singularity", "summation_and_limit_by_sign"),
+)
 
 
 def plan(scale: float) -> list[tuple[str, dict]]:
@@ -222,6 +235,11 @@ def plan(scale: float) -> list[tuple[str, dict]]:
     steps.append(("prove_rule", {
         "rule": "increment_identity",
         "prover": "increment_identity_by_polynomial_algebra"}))
+    # And the band inequalities, whose exponents are forced by scaling.
+    # These run here rather than in the report so the final library table
+    # says PROVED for them instead of trusted.
+    for rule, prover_name in NORM_PROOFS:
+        steps.append(("prove_rule", {"rule": rule, "prover": prover_name}))
 
     steps.append(("library_report", {}))
     for name in INSTANCES:
@@ -432,12 +450,92 @@ def report_what_was_proved(machine: RenMachine) -> None:
             ("every order of the background expansion",
              "not attempted: the cutoff recursion is decidable in the same "
              "way, and its coefficients are not"),
-            ("every dyadic band", "out of reach: a statement about function "
-             "space norms, not about arithmetic"),
-            ("every slow label", "out of reach: same"),
+            ("every dyadic band", "REACHED by derivation below, given "
+             "Bernstein: the dyadic sum is decided by its exponent"),
+            ("every slow label", "out of reach: no decidable structure here"),
             ("every concentration scale q as q -> 0",
-             "out of reach: a limit, not an induction")):
+             "REACHED by derivation below: a limit decided by the sign of "
+             "one exponent")):
         print(f"    {what:42} {verdict}")
+
+
+
+
+def report_norm_derivations(machine: RenMachine) -> None:
+    """Statements about norms, reached by chaining rules rather than cited.
+
+    The run has been calling these out of reach, and that was too coarse.
+    An estimate has an analytic half and an exponent half; the analytic
+    half is assumed here, by name, and the exponent half is derived and
+    then chained. What comes out is a derivation whose exponents are exact
+    and whose assumptions are listed, which is a different and more useful
+    thing than an imported estimate.
+    """
+    print("\n--- statements about function space norms, by derivation ---")
+    print("  Five inequalities as rules. Each one's EXPONENT is derived from")
+    print("  the requirement that the inequality survive rescaling the")
+    print("  function, with the integrability indices left as variables, so")
+    print("  the derivation covers every index rather than a sample. What")
+    print("  is assumed is that a finite constant exists at all.")
+    for rule_name, _ in NORM_PROOFS:
+        rule = machine.library.get(rule_name)
+        mark = "PROVED" if rule.proved else "NOT PROVED"
+        print(f"    {rule_name:26} {mark:11} {rule.proved[:46]}")
+    print("    holder_product             ASSUMED     its index arithmetic is "
+          "Hoelder's, not derived here")
+
+    print("\n  A derivation the construction needs. The starting point is an")
+    print("  L^2 band estimate for the residual, which is the kind of thing")
+    print("  Proposition 7.5 delivers and which is ASSUMED here, not proved:")
+    proof = machine.prove(RESIDUAL_START, RESIDUAL_TARGET, max_depth=6)
+    print(f"    {RESIDUAL_START}")
+    for step in proof.steps:
+        print(f"      --{step.rule}-->  {step.after}")
+    print(f"    {'reached' if proof.found else 'NOT reached'}: "
+          f"the residual's L^infinity norm tends to zero at the singularity")
+    print(f"    {proof.evidence()}, over {proof.length} moves")
+
+    print("\n  Two of the quantifiers this run kept calling out of reach are")
+    print("  discharged in that chain, and neither by instances:")
+    print("    every dyadic band  -- sum_over_bands, which converges exactly")
+    print("      when the frequency exponent is negative; here it is -3/2")
+    print("    the limit q -> 0   -- limit_at_the_singularity, which holds")
+    print("      exactly when the scale exponent is positive; here it is 1/5")
+    print("  Both guards DECLINE otherwise, so a divergent sum or a bound")
+    print("  that does not vanish stops the search instead of passing.")
+
+    for start, why in ((est(d=3, dv=0, ip=Fraction(1, 2), fr=Fraction(1),
+                            sc=Fraction(1, 5)), "frequency exponent +1: the "
+                        "dyadic sum diverges"),
+                       (est(d=3, dv=0, ip=Fraction(1, 2), fr=Fraction(-3),
+                            sc=Fraction(-1, 5)), "scale exponent -1/5: the "
+                        "bound blows up instead of vanishing")):
+        blocked = machine.prove(start, RESIDUAL_TARGET, max_depth=6)
+        print(f"    {'reached' if blocked.found else 'refused':8} {why}")
+
+    print("\n  The quadratic term, which is where Hoelder earns its place.")
+    print("  Two band estimates for the increment multiply, and the")
+    print("  integrability indices add rather than being chosen:")
+    half = est(d=3, dv=0, ip=Fraction(1, 2), fr=Fraction(-2), sc=Fraction(1, 10))
+    product = machine.prove(pair(half, half), RESIDUAL_TARGET, max_depth=6)
+    print(f"    {pair(half, half)}")
+    for step in product.steps:
+        print(f"      --{step.rule}-->  {step.after}")
+
+    used = set(proof.rule_names()) | set(product.rule_names())
+    print("\n  What those chains rest on, collected back out of the rules:")
+    for line in assumptions_behind(machine.library, sorted(used)):
+        print(f"    - {line}")
+    print("    - and the starting estimates themselves, which are the")
+    print("      paper's analytic work and are not derived anywhere here")
+
+    print("\n  So the honest statement is narrower than it looks and wider")
+    print("  than before. Bernstein and Hoelder are not proved here and are")
+    print("  not in question; what is now machine-checked is everything the")
+    print("  construction does WITH an estimate once it has one. What is")
+    print("  still absent is the estimate: Theorem 4.6 and Propositions 5.5,")
+    print("  7.5 and 9.9 are not corollaries of these inequalities, and no")
+    print("  chain of them produces one.")
 
 
 def report_the_two_gaps(machine: RenMachine) -> None:
@@ -498,6 +596,7 @@ def main() -> None:
     install_navier_stokes_rules(machine.library)
     install_mechanism_rules(machine.library)
     install_derivation_rules(machine.library)
+    install_norm_rules(machine.library)
 
     # Depth 24: the derivation runs from the exponent h through the energy
     # budget, the wave increment, the four moves of one correction cycle and
@@ -525,6 +624,7 @@ def main() -> None:
     report_derivation(machine)
     report_mechanisms(machine)
     report_what_was_proved(machine)
+    report_norm_derivations(machine)
     report_sensitivity(machine)
     report_the_two_gaps(machine)
 

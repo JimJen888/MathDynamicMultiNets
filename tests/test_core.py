@@ -1060,6 +1060,109 @@ def test_a_proof_fails_when_the_rule_or_the_cycle_is_wrong():
     assert widened.budget.feasible and widened.budget.upper > Fraction(1, 10)
 
 
+# ---------------------------------------------------------------------------
+# Statements about function space norms, by derivation
+# ---------------------------------------------------------------------------
+def test_a_norm_estimate_chains_to_a_statement_about_the_whole_function():
+    """An assumed band estimate is carried to a limit statement by rules.
+
+    Two of the quantifiers the Navier-Stokes run calls out of reach are
+    discharged on the way, and neither by instances: the dyadic sum is
+    decided by the sign of its exponent, and so is the limit.
+    """
+    from fractions import Fraction
+
+    from dynamicmultinets.normcalc import (RESIDUAL_START, RESIDUAL_TARGET,
+                                           assumptions_behind, est,
+                                           install_norm_rules)
+
+    m = RenMachine()
+    install_norm_rules(m.library)
+
+    proof = m.prove(RESIDUAL_START, RESIDUAL_TARGET, max_depth=6)
+    assert proof.found and not proof.unmeasured
+    assert proof.rule_names() == ["bernstein_uniform", "sum_over_bands",
+                                  "limit_at_the_singularity"]
+
+    # The exactness is only as good as what it leaned on, and the chain
+    # has to be able to say what that was.
+    leaned = assumptions_behind(m.library, proof.rule_names())
+    assert any("Bernstein" in a for a in leaned)
+    assert any("geometric series" in a for a in leaned)
+
+    # A divergent dyadic sum stops the search rather than passing.
+    diverges = est(d=3, dv=0, ip=Fraction(1, 2), fr=Fraction(1),
+                   sc=Fraction(1, 5))
+    assert not m.prove(diverges, RESIDUAL_TARGET, max_depth=6).found
+
+    # So does a bound that grows at the singularity instead of vanishing.
+    grows = est(d=3, dv=0, ip=Fraction(1, 2), fr=Fraction(-3),
+                sc=Fraction(-1, 5))
+    assert not m.prove(grows, RESIDUAL_TARGET, max_depth=6).found
+
+
+def test_the_band_exponent_is_derived_from_scaling_not_quoted():
+    """`d(1/p - 1/r)` is forced by the inequality surviving a rescaling of
+    the function, and the prover rearranges that equation rather than
+    trusting a table. It runs the rule's own arithmetic, so a rule with the
+    wrong exponent is refused."""
+    from fractions import Fraction
+
+    from dynamicmultinets.normcalc import install_norm_rules
+
+    m = RenMachine()
+    install_norm_rules(m.library)
+    for name in ("bernstein_uniform", "bernstein_to_energy",
+                 "bernstein_derivative"):
+        report = m.prove_rule(name, "band_exponents_by_scaling")
+        assert report.established, (name, report.judgement.obstruction)
+        assert m.library.get(name).proved
+
+    # Two powers of 1/p instead of three, in the arithmetic the rule runs.
+    m2 = RenMachine()
+    install_norm_rules(m2.library)
+    rule = m2.library.get("bernstein_uniform")
+
+    def wrong(f):
+        f["fr"] = f["fr"] + 2 * f["ip"]
+        f["ip"] = Fraction(0)
+        return f
+
+    rule.shift = wrong
+    refused = m2.prove_rule("bernstein_uniform", "band_exponents_by_scaling")
+    assert not refused.established and not rule.proved
+    assert "2ip" in refused.judgement.obstruction
+
+    # A summation guard that lets a divergent series through is refused.
+    m3 = RenMachine()
+    install_norm_rules(m3.library)
+    loose = m3.library.get("sum_over_bands")
+    loose.fn = lambda c: Content.abstract("glob(d=3,dv=0,ip=0,sc=1/5)")
+    assert not m3.prove_rule("sum_over_bands",
+                             "summation_and_limit_by_sign").established
+
+
+def test_holder_adds_the_indices_and_refuses_when_it_cannot():
+    """The quadratic term needs a product estimate, and the integrability
+    index of a product is the sum of the two. Past one it is not a
+    Lebesgue index any more and the rule declines."""
+    from fractions import Fraction
+
+    from dynamicmultinets.normcalc import est, install_norm_rules, pair
+
+    m = RenMachine()
+    install_norm_rules(m.library)
+    half = est(d=3, dv=0, ip=Fraction(1, 2), fr=Fraction(-2), sc=Fraction(1, 10))
+    got = m.library.get("holder_product").apply(Content.abstract(pair(half, half)))
+    assert got is not None
+    assert got.text == est(d=3, dv=0, ip=Fraction(1), fr=Fraction(-4),
+                           sc=Fraction(1, 5))
+
+    steep = est(d=3, dv=0, ip=Fraction(3, 4), fr=Fraction(-2), sc=Fraction(1, 10))
+    assert m.library.get("holder_product").apply(
+        Content.abstract(pair(steep, steep))) is None
+
+
 def test_the_theorem_is_reachable_only_through_the_imported_estimates():
     """Every result in the paper is a rule here, so the derivation of Theorem
     1.1 is a chain the machine can find. Nine of its steps are estimates on

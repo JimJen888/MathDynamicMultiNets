@@ -336,285 +336,7 @@ Default settings, single runs, no cherry-picking. Times are on one RTX 4090
 (2m04s for experiment 1, 4m01s for experiment 2, 4m15s for appendix A); the
 same runs on CPU take a few times longer and land in the same place.
 
-**Experiment 1 — the distributive rule** (`run_multiplication.py`)
-
-![Experiment 1: the final library and the conciseness objective](docs/experiment1.png)
-
-```
---- objective ---
-library: 11 rules, 9816 bits
-benchmark: 4/4 solved, 6 rule applications
-objective J = 15816 bits
-  read_screen:      ok 1 steps via read_expression
-  rewrite:          ok 2 steps via decimal_split, distribute_symbolic
-  screen_to_value:  ok 2 steps via read_expression, eval_arith
-  value:            ok 1 steps via eval_arith
-```
-
-| rule | holdout | fresh data | trusted |
-|---|---|---|---|
-| `read_expression` (specific→abstract) | 0.990 | **0.9867** (150 checks) | yes |
-| `distributive_learned` (specific→specific) | 0.983 | **0.9609** (230 checks) | yes |
-
-The learned rewrite was checked twice on the same fresh set: **0.9609** against
-the oracle, and **0.9609** against the independent chain
-`read_expression → decimal_split → distribute_symbolic → render`. Two routes
-that share no machinery agreeing to four digits is what verification is for.
-
-All four benchmark tasks solved, `J = 15816 bits` over 11 rules and 6 rule
-applications, including `'12*30' (drawn, unlabelled) → '360'` in two steps at
-confidence **0.9803** — a chain that leaves the specific domain and comes back.
-Unlike the construction loop in experiment 2, nothing here is applied to its
-own output more than once, so the chain is two links long and the reader's
-0.9867 is most of what the confidence is made of.
-
-Then the objective does something worth noticing: the learned distributive rule
-is verified and trusted, and still reported **unused**. Going through the
-picture costs two extra domain crossings to reproduce an identity the machine
-already had, so `simplify_library` proposes dropping it — while keeping the
-reader, which has no symbolic substitute. The rule is not wrong; it just does
-not pay for itself. That is the conciseness objective doing its job, and it is
-left in the example rather than tuned away.
-
-The `grow_ensemble` step usually **discards** its specialist here, and says so:
-in this run it mined 55 hard cases, trained on them, measured base 0.985 →
-ensemble 0.960 on 454 held-out examples, and left the base rule alone. §3's
-construction is treated as a claim to be checked, not an assumption.
-
-**Experiment 2 — interior angles of a triangle** (`run_geometry.py`)
-
-![Experiment 2: the final library after the proof is kept as a rule](docs/experiment2.png)
-
-```
---- objective ---
-library: 13 rules, 10736 bits
-benchmark: 1/1 solved, 1 rule applications
-objective J = 11736 bits
-  triangle_180: ok 1 steps via triangle_angle_sum
-```
-
-Two learned rules of different kinds: `construct_aux_line` looks at the drawing
-and *edits* it (output is another drawing, so it can be applied again — the
-construction loop is proof search inside the specific domain), and
-`read_angle_facts` says what the finished figure licenses. `iterate_rule` then
-folds the loop into `construct_until_parallel`, which runs the constructor to
-its own stopping point and keeps whichever drawing the reader most calls the
-proof configuration — so a wrong step costs a candidate rather than the proof.
-From a drawing whose auxiliary line starts off the apex and at the wrong angle:
-
-```
-PROVED: 'triangle0' => 'B1+A3+B2=180'   (3 steps, confidence 0.877)
-  --construct_until_parallel [spec->spec]-->  triangle0|move_up|move_up|rotate_cw x5
-  --read_angle_facts        [spec->abst]-->  'A1=B1,A2=B2,A1+A3+A2=180'
-  --substitute_equalities   [abst->abst]-->  'B1+A3+B2=180'
-```
-
-Confidence is the product along the chain, so a rule that is merely *above
-threshold* is not good enough to be applied six times: six links at 0.95 is
-0.74 before the reader is even consulted. That is the conclusions' 0.99999¹⁰⁰⁰
-argument seen from the wrong end, and it is why this example trains to
-convergence rather than to "verified".
-
-Underneath sat a gap verification could not see, and it is worth reading as the
-cautionary result of the repository. A specific→specific rule is applied to its
-own outputs, so a held-out set of generated *inputs* is the weaker of the two
-checks available. The construction moves the line in steps of 0.12 and rotates
-it in steps of 0.15, into tolerances of 0.06 and 0.12 — it therefore finishes
-*near* the proof configuration and essentially never *on* it, while
-`triangle_scenes` drew nothing but the exact configuration. Probed directly,
-`read_angle_facts` called an exactly parallel line correct 40 times out of 40
-and the line its own construction produces 21 times out of 40. A rule
-verifying at **0.995** that cannot recognise a finished proof — and the search
-duly reported "space exhausted" after eleven nodes while every rule in the
-table read as trusted.
-
-The repair takes two halves that do nothing apart: the policy now stops once
-another rotation would not get *closer* rather than the instant the tolerance
-is met, and the generator draws solved scenes across exactly that landing zone.
-Changing only the policy leaves every training label identical, because no
-generated scene lies in the window it affects; changing only the generator, if
-it fills the whole tolerance band, restores the proof and triples the rate of
-proofs licensed on unfinished constructions, because positives at 0.119 and
-negatives at 0.121 are the same picture with opposite labels.
-
-`keep_proof` then stores the whole thing as one rule — `triangle_angle_sum`,
-specific→abstract at 0.87 — and the benchmark drops to a single rule
-application, which is the `1/1 solved, 1 rule applications` in the screenshot
-above. The proof is replayed image by image into
-`renders/geometry/` (see below), which is the only way to check that the
-auxiliary line really did end up through the apex and parallel to the opposite
-edge.
-
-**Appendix A — sketch to escape direction** (`run_robotics.py`)
-
-`RuleNet(num_classes=7, num_slots=1)` — DetourNet with a smaller action set —
-on 6000 generated sketches, verified against the collision geometry on 290
-fresh ones:
-
-```
-top-1 0.683    top-3 0.883    'direct' 142/144
-```
-
-Top-3 is the operational number, for the reason `detourNet.evaluate` gives:
-the planner walks the ranked candidates and takes the first one a collision
-check clears. `direct` — the class whose failure drives the arm into an
-obstacle — is at **0.986**; the six detour classes are what the other 0.32
-is made of, and they sit between 0.36 and 0.50.
-
-This is the one experiment where training to convergence does **not** rescue
-the rule. At 1500 sketches it scored 0.72 on its holdout and 0.603 on fresh
-scenes; that 0.12 gap is a rule short of data, and 6000 sketches close it —
-0.696 and 0.683, within a point of each other, top-3 up from 0.800 to 0.883.
-What is left is not overfitting but the task: picking one of six detours from
-a sketch is genuinely harder than deciding whether the path is blocked at all,
-which is the part the net does learn. So the rule stays **below its own 0.85
-threshold and is never trusted**, and the machine will not let it into a
-proof. That is the intended behaviour of `verify_rule`, and it is the reason
-this appendix reports a ranking rather than a chain.
-
-**Experiment 4 — the Riemann hypothesis, and where it stops** (`run_riemann.py`)
-
-RH is not a cell: it quantifies over the zeros of an analytic function and
-nothing here can write that down. Robin's criterion is, though — RH holds iff
-`sigma(n) < e^gamma n ln ln n` for every `n > 5040` — and that is a predicate
-over the integers, exactly decidable one `n` at a time. So the machine gets a
-reader (`read_integer`, the only learned rule), composes it with four exact
-divisor-sum rules, and decides the criterion from a *drawing*:
-
-```
-dataset         rule                      n     acc    base  reading
-robin_balanced  robin_from_drawing       60   1.000   0.567  informative: +0.433
-robin_fresh     robin_from_drawing      300   1.000   1.000  VACUOUS
-robin_tail      robin_from_drawing      200   1.000   1.000  VACUOUS
-read_fresh      read_integer            300   0.997   0.030  informative: +0.967
-robin_tail      read_integer            200   0.000   0.005  informative: -0.005
-```
-
-Every accuracy is printed against the **base rate**, and that column is the
-experiment. Robin's inequality holds at every `n > 5040` anyone can enumerate,
-so a test set drawn from that range carries one label and a rule that answers
-`robin_holds` without reading anything scores 1.000 on it. The last two rows
-are the same 200 drawings scored twice: the composite is **perfect** on the
-6-digit tail while its own reader is at **0.000** there, having never seen a
-drawing that wide. A verification can be passed perfectly by a rule whose
-perception has completely failed, and only the base-rate column shows it.
-
-`robin_cases` is the honest test — Robin's 26 exceptional integers, which fail,
-balanced against integers above 5040, which pass — and on it the composite
-genuinely reads, at 1.000 against a 0.567 base rate. Proofs come out as mixed
-chains, `'5040' => 'robin_fails'` in one step from the drawing.
-
-Two things this does **not** do, both demonstrated in the run rather than
-asserted. The chain has no notion of what it is looking at: hand it a cell
-reading `zeta(s)=0` and it returns `robin_holds` with the same confidence it
-reports for a real integer, which is why the universal claim is kept out of the
-prover — posed as a cell, it gets "proved" the same way. And 560 exact
-instances do not reach a statement about infinitely many; independent
-computation has checked RH-equivalents vastly further without that ever
-becoming a proof. The machine states the remaining step as an untested transfer
-instead of folding it into a chain with a confidence, which is the behaviour
-the architecture is for.
-
-**Experiment 5 — forming a conjecture instead of proving one** (`run_montgomery.py`)
-
-The other thing the architecture is for. Experiment 4 walks up to RH and stops
-at the quantifier; this one does what experimental mathematics does — forms a
-rule where truth is known, applies it where it is not, and reports the result
-as a conjecture.
-
-Montgomery's question: normalise the gaps between consecutive zeta zeros to
-mean 1, and ask what the distribution looks like. The machine samples level
-spacings from three ensembles it can generate and therefore grade itself on
-(GUE, GOE, Poisson), draws each as a histogram + CDF on the specific tape,
-learns a `specific → abstract` **choice** rule naming the ensemble, verifies it,
-then computes the actual zeros by Riemann–Siegel and applies the rule there.
-
-```
-spacing_fresh:   n=300  accuracy 1.000  base rate 0.333  (+0.667)
-spacing_bigdim:  n=150  accuracy 1.000  base rate 0.333  (+0.667)   # 120×120, unseen size
-zeta_blocks:     0 of 40 cells could be labelled — as intended
-                 gue 40/40 (100%),  t ∈ [14, 18047],  20000 spacings
-```
-
-`spacing_ensemble` **declines every zeta cell**, so no verification number can
-be produced for the open question even by accident — the refusal is the feature.
-The rule is verified only where the machine drew the data, and the zeta verdict
-is an application, not a check.
-
-A three-way choice cannot say "none of these", so the run tests typicality
-separately — and the first version of that test was wrong in an instructive
-way. Comparing zeta's 40-block average against *single* 500-spacing GUE draws
-made it look more typically GUE than GUE, which is a sample-size mismatch, not
-a finding. Against the correct null — GUE **group means** over the same 40
-blocks:
-
-```
-zeta vs mean gue 0.686   goe 2.509   poisson 6.560
-gue group means sit 0.161 ± 0.033 from the gue mean (max of 400 draws: 0.255)
-the zeta group mean sits at 0.686 — OUTSIDE, by 2.7× the largest of 400 draws
-lower half  t from    14   L1 to gue mean 0.740
-upper half  t from  9879   L1 to gue mean 0.637
-```
-
-So: far nearer GUE than the alternatives, **and** statistically distinguishable
-from it at these heights — with the deviation shrinking as the zeros climb.
-That is the known slow convergence (Odlyzko needed the 10²⁰-th zero for close
-agreement), recovered from the machine's own data rather than assumed.
-
-What this earns is the verified rule; what it conjectures is the zeta verdict,
-about the nearest-neighbour spacing distribution only — Montgomery's conjecture
-concerns pair correlation, a finer statistic the rule never sees. And the
-conjecture is not new: it is Montgomery–Odlyzko, reached from data by a machine
-told nothing about it, which is the point. A pipeline for generating conjectures
-is worth exactly what it scores on the ones whose answer is already believed.
-
-**Experiment 6 — a rule from data, and a transfer that can be tested**
-(`run_finite_height.py`)
-
-Experiment 5 measured the zeta spacings' deviation from GUE and set it aside.
-This asks whether that leftover is lawful enough to state as a rule:
-
-```
-p_zeta(s; t)  =  p_GUE(s)  +  g(s) / L  +  o(1/L),      L = log(t / 2π)
-```
-
-a fixed shape, amplitude falling as one over the log of the height. The point
-is the contrast with experiment 4: Robin's criterion generalises to an infinite
-family and the transfer can never be run, while this generalises to *higher t*,
-and higher t is reachable. Fit `g` on low bands, predict bands the fit never
-saw. On 80000 zeros to t=61394, fitting below t=33190:
-
-```
-band   L    vs GUE   vs rule   improvement
-4    8.67   0.0748   0.0372       50.3%
-5    8.85   0.0703   0.0466       33.8%
-6    9.00   0.0715   0.0449       37.2%
-7    9.13   0.0682   0.0429       37.1%
-mean                              39.6%
-shuffled-shape null  -46.4% ± 10.5%  (max -14.6%)
-```
-
-The transfer survives, and scrambling `g` across bins makes the fit *worse* —
-so the structure carries the prediction, not the magnitude. The shape says the
-zeros are **more rigid than GUE** at these heights: a deficit of small gaps
-(repulsion stronger than the random-matrix law), an excess near the mean
-spacing, a deficit again in the tail.
-
-Two controls that mattered. The zero scan originally used a fixed step and lost
-~9 zeros in 80000 by t≈60000 — skipped zeros come in *pairs*, so Z's sign
-pattern stays consistent and nothing complains, and what gets skipped is the
-*closest* pairs, which depletes small spacings and imitates the very repulsion
-being measured. `scan_step` now adapts to the local mean gap. And the effect
-needs ~3000 spacings per band to be visible at all (1500/band: +3%, 3000: +37%,
-5000: +47%), so a run that splits too finely reports nothing and means nothing
-by it.
-
-This is very probably **not new** — a 1/log(t) correction is the standard scale
-for finite-height effects here, and published computations reach 10²² where
-this reaches 6×10⁴. What is offered is the measurement, its controls, and a
-pipeline that produced it without being told what to look for.
-
-**Experiment 7 — a published construction, rebuilt as rules**
+**Experiment 1 — a published construction, rebuilt as rules**
 (`run_navier_stokes.py`)
 
 The OpenAI preprint constructs a forced Navier–Stokes solution that starts from
@@ -887,25 +609,91 @@ procedure disagree. Make the first move gain nothing and no budget exists at
 all. Make step 2 cost one derivative instead of four and the derived budget
 widens accordingly — the number follows the moves, not the docstring.
 
+### Statements about function space norms, reached by chaining
+
+Calling the remaining quantifiers "out of reach because they are about
+norms" was too coarse, and `normcalc.py` is the correction. An estimate
+
+    ||∇^s P_M u||_{L^p(R³)}  ≤  C · M^a · q^b
+
+has two halves that behave completely differently. That *some* finite
+constant works is analysis and is not decidable here. What `a`, `b`, `s`
+and `1/p` have to be, and what happens to them when two estimates are
+combined, is linear arithmetic, and it is what the construction actually
+manipulates. So the module splits them and says which is which on every
+line it prints.
+
+The exponents are **derived, not quoted**. An inequality between norms has
+to survive replacing `f` by `f(λ·)`, and that requirement forces the
+exponent: rescaling moves the frequency and both norms, and a constant that
+does not depend on λ leaves `a = d(1/p − 1/r)`. The prover rearranges that
+equation symbolically with the indices left as variables, then runs the
+rule's own arithmetic on the same variables and compares. Writing it that
+way caught a real hole in the first version, which compared against a
+module helper instead of the rule and certified a rule with `2/p` in place
+of `3/p`.
+
+Two rules are where a family of estimates becomes one statement, and they
+are exactly the quantifiers the run kept deferring:
+
+```
+sum_over_bands            converges iff the frequency exponent < 0
+limit_at_the_singularity  vanishes  iff the scale exponent > 0
+```
+
+Both decline otherwise, so a divergent sum or a bound that grows stops the
+search rather than passing through it. A derivation then looks like this,
+starting from an L² band estimate for the residual of the kind Proposition
+7.5 delivers, which is **assumed**:
+
+```
+est(d=3,dv=0,ip=1/2,fr=-3,sc=1/5)
+  --bernstein_uniform-->        est(d=3,dv=0,ip=0,fr=-3/2,sc=1/5)
+  --sum_over_bands-->           glob(d=3,dv=0,ip=0,sc=1/5)
+  --limit_at_the_singularity--> vanishes(d=3,dv=0,ip=0)
+```
+
+The residual's L^∞ norm tends to zero at the singularity, over three moves,
+with every exponent exact. The quadratic term goes the same way through
+`holder_product`, where the integrability indices add rather than being
+chosen, and the rule declines once their sum passes one.
+
+The accounting that makes this honest is `Rule.assumes`. Each rule names
+the classical fact it leans on but does not establish, and
+`assumptions_behind` collects them back out of a finished chain: Bernstein,
+Hölder, the geometric series, the convergence of the Littlewood-Paley
+decomposition, and the starting estimate itself. An exponent computed
+exactly on top of an unstated assumption is the most misleading thing this
+package could print.
+
+So the gain is real and narrower than it looks. Bernstein and Hölder are
+not proved here and are not in question. What is now machine-checked is
+everything the construction does *with* an estimate once it has one. What
+is still absent is the estimate: Theorem 4.6 and Propositions 5.5, 7.5 and
+9.9 are not corollaries of these inequalities, and no chain of them
+produces one.
+
 What this does not reach is the whole of the rest. The construction
-quantifies over five things and only one of them is arithmetic:
+quantifies over five things:
 
 | quantifier | status |
 |---|---|
 | every correction stage j | **proved** — a rational recursion on an integer index |
 | every point of every smooth field, for the increment identity | **proved** — a polynomial identity in the one-jet |
 | every order of the background expansion | the schedule is decidable the same way; the coefficient bounds it is fed are not |
-| every dyadic band | out of reach — function space norms, not arithmetic |
-| every slow label | out of reach — same |
-| every concentration scale q as q → 0 | out of reach — a limit, not an induction |
+| every dyadic band | **reached by derivation**, given Bernstein: the dyadic sum is decided by its exponent |
+| every concentration scale q as q → 0 | **reached by derivation**: a limit decided by the sign of one exponent |
+| every slow label | out of reach — no decidable structure here |
 
-So the answer to "can the proof be finished here" is no, and now for a
-sharper reason than before. It is not that more instances are needed. Where
-the paper's derivation is plain — an identity in the one-jet, a rational
-recursion on an integer index — it has been carried out and the result is a
-proof rather than an accuracy. The remaining quantifiers are statements
-about function space norms, and no procedure over the rationals reaches
-them. Finishing would mean formalising the analysis, which is what the Lean
+So the answer to "can the proof be finished here" is still no, and the
+reason has moved twice. It is not that more instances are needed. Where the
+paper's derivation is plain, an identity in the one-jet or a rational
+recursion on an integer index, it has been carried out and the result is a
+proof rather than an accuracy. Where the claim is about norms, the exponent
+half is now derived and chained and the analytic half is assumed by name.
+What remains is the analytic half itself: the specific estimates the
+construction needs are not consequences of the general inequalities, and
+nothing here produces one. Finishing would mean formalising the analysis, which is what the Lean
 development does and what this architecture does not attempt.
 
 Two further derivations look plain enough to be worth the same treatment
@@ -942,6 +730,284 @@ specific tape, the exponent cell is read by `transcribe_unsafe` and the
 five-step chain to the energy verdict goes through; marked `observed`, nothing
 in the library can start, and the reader that would close it is exactly what
 this run does not build.
+
+**Experiment 2 — the distributive rule** (`run_multiplication.py`)
+
+![Experiment 2: the final library and the conciseness objective](docs/experiment1.png)
+
+```
+--- objective ---
+library: 11 rules, 9816 bits
+benchmark: 4/4 solved, 6 rule applications
+objective J = 15816 bits
+  read_screen:      ok 1 steps via read_expression
+  rewrite:          ok 2 steps via decimal_split, distribute_symbolic
+  screen_to_value:  ok 2 steps via read_expression, eval_arith
+  value:            ok 1 steps via eval_arith
+```
+
+| rule | holdout | fresh data | trusted |
+|---|---|---|---|
+| `read_expression` (specific→abstract) | 0.990 | **0.9867** (150 checks) | yes |
+| `distributive_learned` (specific→specific) | 0.983 | **0.9609** (230 checks) | yes |
+
+The learned rewrite was checked twice on the same fresh set: **0.9609** against
+the oracle, and **0.9609** against the independent chain
+`read_expression → decimal_split → distribute_symbolic → render`. Two routes
+that share no machinery agreeing to four digits is what verification is for.
+
+All four benchmark tasks solved, `J = 15816 bits` over 11 rules and 6 rule
+applications, including `'12*30' (drawn, unlabelled) → '360'` in two steps at
+confidence **0.9803** — a chain that leaves the specific domain and comes back.
+Unlike the construction loop in experiment 2, nothing here is applied to its
+own output more than once, so the chain is two links long and the reader's
+0.9867 is most of what the confidence is made of.
+
+Then the objective does something worth noticing: the learned distributive rule
+is verified and trusted, and still reported **unused**. Going through the
+picture costs two extra domain crossings to reproduce an identity the machine
+already had, so `simplify_library` proposes dropping it — while keeping the
+reader, which has no symbolic substitute. The rule is not wrong; it just does
+not pay for itself. That is the conciseness objective doing its job, and it is
+left in the example rather than tuned away.
+
+The `grow_ensemble` step usually **discards** its specialist here, and says so:
+in this run it mined 55 hard cases, trained on them, measured base 0.985 →
+ensemble 0.960 on 454 held-out examples, and left the base rule alone. §3's
+construction is treated as a claim to be checked, not an assumption.
+
+**Experiment 3 — interior angles of a triangle** (`run_geometry.py`)
+
+![Experiment 3: the final library after the proof is kept as a rule](docs/experiment2.png)
+
+```
+--- objective ---
+library: 13 rules, 10736 bits
+benchmark: 1/1 solved, 1 rule applications
+objective J = 11736 bits
+  triangle_180: ok 1 steps via triangle_angle_sum
+```
+
+Two learned rules of different kinds: `construct_aux_line` looks at the drawing
+and *edits* it (output is another drawing, so it can be applied again — the
+construction loop is proof search inside the specific domain), and
+`read_angle_facts` says what the finished figure licenses. `iterate_rule` then
+folds the loop into `construct_until_parallel`, which runs the constructor to
+its own stopping point and keeps whichever drawing the reader most calls the
+proof configuration — so a wrong step costs a candidate rather than the proof.
+From a drawing whose auxiliary line starts off the apex and at the wrong angle:
+
+```
+PROVED: 'triangle0' => 'B1+A3+B2=180'   (3 steps, confidence 0.877)
+  --construct_until_parallel [spec->spec]-->  triangle0|move_up|move_up|rotate_cw x5
+  --read_angle_facts        [spec->abst]-->  'A1=B1,A2=B2,A1+A3+A2=180'
+  --substitute_equalities   [abst->abst]-->  'B1+A3+B2=180'
+```
+
+Confidence is the product along the chain, so a rule that is merely *above
+threshold* is not good enough to be applied six times: six links at 0.95 is
+0.74 before the reader is even consulted. That is the conclusions' 0.99999¹⁰⁰⁰
+argument seen from the wrong end, and it is why this example trains to
+convergence rather than to "verified".
+
+Underneath sat a gap verification could not see, and it is worth reading as the
+cautionary result of the repository. A specific→specific rule is applied to its
+own outputs, so a held-out set of generated *inputs* is the weaker of the two
+checks available. The construction moves the line in steps of 0.12 and rotates
+it in steps of 0.15, into tolerances of 0.06 and 0.12 — it therefore finishes
+*near* the proof configuration and essentially never *on* it, while
+`triangle_scenes` drew nothing but the exact configuration. Probed directly,
+`read_angle_facts` called an exactly parallel line correct 40 times out of 40
+and the line its own construction produces 21 times out of 40. A rule
+verifying at **0.995** that cannot recognise a finished proof — and the search
+duly reported "space exhausted" after eleven nodes while every rule in the
+table read as trusted.
+
+The repair takes two halves that do nothing apart: the policy now stops once
+another rotation would not get *closer* rather than the instant the tolerance
+is met, and the generator draws solved scenes across exactly that landing zone.
+Changing only the policy leaves every training label identical, because no
+generated scene lies in the window it affects; changing only the generator, if
+it fills the whole tolerance band, restores the proof and triples the rate of
+proofs licensed on unfinished constructions, because positives at 0.119 and
+negatives at 0.121 are the same picture with opposite labels.
+
+`keep_proof` then stores the whole thing as one rule — `triangle_angle_sum`,
+specific→abstract at 0.87 — and the benchmark drops to a single rule
+application, which is the `1/1 solved, 1 rule applications` in the screenshot
+above. The proof is replayed image by image into
+`renders/geometry/` (see below), which is the only way to check that the
+auxiliary line really did end up through the apex and parallel to the opposite
+edge.
+
+**Appendix A — sketch to escape direction** (`run_robotics.py`)
+
+`RuleNet(num_classes=7, num_slots=1)` — DetourNet with a smaller action set —
+on 6000 generated sketches, verified against the collision geometry on 290
+fresh ones:
+
+```
+top-1 0.683    top-3 0.883    'direct' 142/144
+```
+
+Top-3 is the operational number, for the reason `detourNet.evaluate` gives:
+the planner walks the ranked candidates and takes the first one a collision
+check clears. `direct` — the class whose failure drives the arm into an
+obstacle — is at **0.986**; the six detour classes are what the other 0.32
+is made of, and they sit between 0.36 and 0.50.
+
+This is the one experiment where training to convergence does **not** rescue
+the rule. At 1500 sketches it scored 0.72 on its holdout and 0.603 on fresh
+scenes; that 0.12 gap is a rule short of data, and 6000 sketches close it —
+0.696 and 0.683, within a point of each other, top-3 up from 0.800 to 0.883.
+What is left is not overfitting but the task: picking one of six detours from
+a sketch is genuinely harder than deciding whether the path is blocked at all,
+which is the part the net does learn. So the rule stays **below its own 0.85
+threshold and is never trusted**, and the machine will not let it into a
+proof. That is the intended behaviour of `verify_rule`, and it is the reason
+this appendix reports a ranking rather than a chain.
+
+**Experiment 4 — the Riemann hypothesis, and where it stops** (`run_riemann.py`)
+
+RH is not a cell: it quantifies over the zeros of an analytic function and
+nothing here can write that down. Robin's criterion is, though — RH holds iff
+`sigma(n) < e^gamma n ln ln n` for every `n > 5040` — and that is a predicate
+over the integers, exactly decidable one `n` at a time. So the machine gets a
+reader (`read_integer`, the only learned rule), composes it with four exact
+divisor-sum rules, and decides the criterion from a *drawing*:
+
+```
+dataset         rule                      n     acc    base  reading
+robin_balanced  robin_from_drawing       60   1.000   0.567  informative: +0.433
+robin_fresh     robin_from_drawing      300   1.000   1.000  VACUOUS
+robin_tail      robin_from_drawing      200   1.000   1.000  VACUOUS
+read_fresh      read_integer            300   0.997   0.030  informative: +0.967
+robin_tail      read_integer            200   0.000   0.005  informative: -0.005
+```
+
+Every accuracy is printed against the **base rate**, and that column is the
+experiment. Robin's inequality holds at every `n > 5040` anyone can enumerate,
+so a test set drawn from that range carries one label and a rule that answers
+`robin_holds` without reading anything scores 1.000 on it. The last two rows
+are the same 200 drawings scored twice: the composite is **perfect** on the
+6-digit tail while its own reader is at **0.000** there, having never seen a
+drawing that wide. A verification can be passed perfectly by a rule whose
+perception has completely failed, and only the base-rate column shows it.
+
+`robin_cases` is the honest test — Robin's 26 exceptional integers, which fail,
+balanced against integers above 5040, which pass — and on it the composite
+genuinely reads, at 1.000 against a 0.567 base rate. Proofs come out as mixed
+chains, `'5040' => 'robin_fails'` in one step from the drawing.
+
+Two things this does **not** do, both demonstrated in the run rather than
+asserted. The chain has no notion of what it is looking at: hand it a cell
+reading `zeta(s)=0` and it returns `robin_holds` with the same confidence it
+reports for a real integer, which is why the universal claim is kept out of the
+prover — posed as a cell, it gets "proved" the same way. And 560 exact
+instances do not reach a statement about infinitely many; independent
+computation has checked RH-equivalents vastly further without that ever
+becoming a proof. The machine states the remaining step as an untested transfer
+instead of folding it into a chain with a confidence, which is the behaviour
+the architecture is for.
+
+**Experiment 5 — forming a conjecture instead of proving one** (`run_montgomery.py`)
+
+The other thing the architecture is for. Experiment 4 walks up to RH and stops
+at the quantifier; this one does what experimental mathematics does — forms a
+rule where truth is known, applies it where it is not, and reports the result
+as a conjecture.
+
+Montgomery's question: normalise the gaps between consecutive zeta zeros to
+mean 1, and ask what the distribution looks like. The machine samples level
+spacings from three ensembles it can generate and therefore grade itself on
+(GUE, GOE, Poisson), draws each as a histogram + CDF on the specific tape,
+learns a `specific → abstract` **choice** rule naming the ensemble, verifies it,
+then computes the actual zeros by Riemann–Siegel and applies the rule there.
+
+```
+spacing_fresh:   n=300  accuracy 1.000  base rate 0.333  (+0.667)
+spacing_bigdim:  n=150  accuracy 1.000  base rate 0.333  (+0.667)   # 120×120, unseen size
+zeta_blocks:     0 of 40 cells could be labelled — as intended
+                 gue 40/40 (100%),  t ∈ [14, 18047],  20000 spacings
+```
+
+`spacing_ensemble` **declines every zeta cell**, so no verification number can
+be produced for the open question even by accident — the refusal is the feature.
+The rule is verified only where the machine drew the data, and the zeta verdict
+is an application, not a check.
+
+A three-way choice cannot say "none of these", so the run tests typicality
+separately — and the first version of that test was wrong in an instructive
+way. Comparing zeta's 40-block average against *single* 500-spacing GUE draws
+made it look more typically GUE than GUE, which is a sample-size mismatch, not
+a finding. Against the correct null — GUE **group means** over the same 40
+blocks:
+
+```
+zeta vs mean gue 0.686   goe 2.509   poisson 6.560
+gue group means sit 0.161 ± 0.033 from the gue mean (max of 400 draws: 0.255)
+the zeta group mean sits at 0.686 — OUTSIDE, by 2.7× the largest of 400 draws
+lower half  t from    14   L1 to gue mean 0.740
+upper half  t from  9879   L1 to gue mean 0.637
+```
+
+So: far nearer GUE than the alternatives, **and** statistically distinguishable
+from it at these heights — with the deviation shrinking as the zeros climb.
+That is the known slow convergence (Odlyzko needed the 10²⁰-th zero for close
+agreement), recovered from the machine's own data rather than assumed.
+
+What this earns is the verified rule; what it conjectures is the zeta verdict,
+about the nearest-neighbour spacing distribution only — Montgomery's conjecture
+concerns pair correlation, a finer statistic the rule never sees. And the
+conjecture is not new: it is Montgomery–Odlyzko, reached from data by a machine
+told nothing about it, which is the point. A pipeline for generating conjectures
+is worth exactly what it scores on the ones whose answer is already believed.
+
+**Experiment 6 — a rule from data, and a transfer that can be tested**
+(`run_finite_height.py`)
+
+Experiment 5 measured the zeta spacings' deviation from GUE and set it aside.
+This asks whether that leftover is lawful enough to state as a rule:
+
+```
+p_zeta(s; t)  =  p_GUE(s)  +  g(s) / L  +  o(1/L),      L = log(t / 2π)
+```
+
+a fixed shape, amplitude falling as one over the log of the height. The point
+is the contrast with experiment 4: Robin's criterion generalises to an infinite
+family and the transfer can never be run, while this generalises to *higher t*,
+and higher t is reachable. Fit `g` on low bands, predict bands the fit never
+saw. On 80000 zeros to t=61394, fitting below t=33190:
+
+```
+band   L    vs GUE   vs rule   improvement
+4    8.67   0.0748   0.0372       50.3%
+5    8.85   0.0703   0.0466       33.8%
+6    9.00   0.0715   0.0449       37.2%
+7    9.13   0.0682   0.0429       37.1%
+mean                              39.6%
+shuffled-shape null  -46.4% ± 10.5%  (max -14.6%)
+```
+
+The transfer survives, and scrambling `g` across bins makes the fit *worse* —
+so the structure carries the prediction, not the magnitude. The shape says the
+zeros are **more rigid than GUE** at these heights: a deficit of small gaps
+(repulsion stronger than the random-matrix law), an excess near the mean
+spacing, a deficit again in the tail.
+
+Two controls that mattered. The zero scan originally used a fixed step and lost
+~9 zeros in 80000 by t≈60000 — skipped zeros come in *pairs*, so Z's sign
+pattern stays consistent and nothing complains, and what gets skipped is the
+*closest* pairs, which depletes small spacings and imitates the very repulsion
+being measured. `scan_step` now adapts to the local mean gap. And the effect
+needs ~3000 spacings per band to be visible at all (1500/band: +3%, 3000: +37%,
+5000: +47%), so a run that splits too finely reports nothing and means nothing
+by it.
+
+This is very probably **not new** — a 1/log(t) correction is the standard scale
+for finite-height effects here, and published computations reach 10²² where
+this reaches 6×10⁴. What is offered is the measurement, its controls, and a
+pipeline that produced it without being told what to look for.
 
 ## Layout
 
