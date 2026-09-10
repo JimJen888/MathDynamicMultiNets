@@ -214,6 +214,18 @@ def build_tools(m: RenMachine) -> dict[str, Tool]:
                     threshold: float = 0.99) -> str:
         return m.verify(rule, dataset, oracle or None, threshold).summary()
 
+    @tool("prove_rule",
+          "Decide a rule on its WHOLE input domain with a decision procedure, "
+          "instead of sampling it. Use this only when the rule's content is a "
+          "statement about every case and a procedure exists for the fragment "
+          "it lives in -- rational arithmetic over an index, say. A rule "
+          "settled this way is exact, not accurate. Everything else needs "
+          "verify_rule.",
+          {"rule": _STR, "prover": _STR},
+          ["rule", "prover"])
+    def prove_rule(rule: str, prover: str) -> str:
+        return m.prove_rule(rule, prover).summary()
+
     @tool("verify_against_rules",
           "Check a rule against a chain of rules the machine already trusts, "
           "instead of an oracle. Use this when a learned rule should agree with "

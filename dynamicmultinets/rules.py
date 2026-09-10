@@ -150,6 +150,10 @@ class Rule(ABC):
         # `constructed` and refuse it as an independent route. See
         # `prior.make_transcribe_unsafe`.
         self.copies_caption = False
+        # Set by `verify.prove_rule` when a decision procedure has settled
+        # this rule on its whole input domain. Empty for every rule whose
+        # standing rests on instances, which is almost all of them.
+        self.proved = ""
 
     # -- behaviour -----------------------------------------------------------
     @abstractmethod
@@ -189,6 +193,20 @@ class Rule(ABC):
         """Laplace-smoothed accuracy: an unverified rule is not 100% trusted,
         it is unknown, and a single lucky check is not proof."""
         return (self.stats.n_correct + 1.0) / (self.stats.n_checked + 2.0)
+
+    def measured(self) -> bool:
+        """Is this rule's confidence an estimate of anything?
+
+        Two ways for it to be. Either something checked it, or it is exact
+        by construction and its 1.0 is not an estimate at all. Everything
+        else reports the prior 1/2, and that number is worth being careful
+        with: it does not say the rule is wrong half the time, it says
+        nothing is known. Multiplying several of them together compounds
+        ignorance into a figure that reads like a probability of being
+        wrong, which is why `Proof` counts the unmeasured steps separately
+        instead of only handing back the product.
+        """
+        return self.stats.n_checked > 0 or self.confidence() >= 1.0
 
     # -- persistence ---------------------------------------------------------
     def to_manifest(self) -> dict[str, Any]:
@@ -638,6 +656,12 @@ class IteratedRule(Rule):
         # picked the right one, and that the step produced a right one at all.
         return self.step.confidence() * self.judge.confidence()
 
+    def measured(self) -> bool:
+        # This rule's confidence is its step's and its judge's, so it is an
+        # estimate of something exactly when both of those are.
+        return (super().measured()
+                or (self.step.measured() and self.judge.measured()))
+
     def to_manifest(self) -> dict[str, Any]:
         m = super().to_manifest()
         m["step"] = self.step.name
@@ -652,10 +676,26 @@ class CompositeRule(Rule):
 
     This is how a derivation becomes knowledge: once a chain is found and
     verified, the machine keeps it under one name and stops re-searching for
-    it. Its confidence is the product of its members' (errors compound along a
-    chain -- the 0.99999^1000 argument in the conclusions), and its `steps` is
-    the true number of primitive applications, so the conciseness objective can
-    see that a distilled replacement would be shorter to run.
+    it. Its `steps` is the true number of primitive applications, so the
+    conciseness objective can see that a distilled replacement would be
+    shorter to run.
+
+    Its confidence has two sources and takes the better supported. The
+    product of its members' is the a priori bound -- errors compound along a
+    chain, the 0.99999^1000 argument in the conclusions -- and it is all
+    there is until the chain has been checked. Once the composite has been
+    checked AS A CHAIN against something outside it, that measurement
+    estimates the composite's own error rate directly, and the product stops
+    being the best available answer: a chain of four steps nobody has
+    checked carries the prior 1/2 four times over and reports 1/16, while
+    forty agreements with an independent oracle say something much stronger
+    about the chain than "nothing is known about any of its parts".
+
+    Taking the larger of the two cannot launder trust, which is a separate
+    flag: a composite is trusted only if every member is, or if the
+    composite itself cleared a verification threshold. What it can do is
+    overstate the chain away from the data the probe came from, which is the
+    standing caveat on every measured accuracy here.
     """
 
     def __init__(self, name: str, members: Sequence[Rule], description: str = ""):
@@ -683,10 +723,21 @@ class CompositeRule(Rule):
         return sum(r.steps() for r in self.members)
 
     def confidence(self) -> float:
-        p = 1.0
+        compounded = 1.0
         for r in self.members:
-            p *= r.confidence()
-        return p
+            compounded *= r.confidence()
+        if not self.stats.n_checked:
+            return compounded
+        return max(compounded, super().confidence())
+
+    def measured(self) -> bool:
+        # An unchecked chain of checked steps is not an unknown quantity: the
+        # product of its members' accuracies is an estimate, and a chain that
+        # reports one should not be counted alongside a step nobody has looked
+        # at. A chain with even one unmeasured member is unmeasured, which is
+        # what makes the count in `Proof` the count of imported steps.
+        return (super().measured()
+                or all(r.measured() for r in self.members))
 
     def to_manifest(self) -> dict[str, Any]:
         m = super().to_manifest()
@@ -745,7 +796,10 @@ class RuleLibrary:
             # the confidence column, because everything untrusted was also
             # priced below 1.0; `transcribe_unsafe` is exact and still barred,
             # so the column alone no longer carries the warning.
-            flag = ("trusted" if r.trusted
+            # "proved" and "trusted" are not the same standing and the table
+            # should not print them the same. A trusted rule agreed with
+            # something on a lot of instances; a proved one was decided.
+            flag = ("PROVED" if r.proved else "trusted" if r.trusted
                     else f"NOT TRUSTED, {r.stats.summary()}")
             rows.append(f"{r.name:<26}{mapping:<22}{r.cost_bits():>8.0f}  "
                         f"{r.confidence():>5.2f}  {flag}")

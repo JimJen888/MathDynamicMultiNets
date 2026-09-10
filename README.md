@@ -41,7 +41,7 @@ end, same `fa - fb` fusion; the head goes from `num_classes` logits to
 ```bash
 conda env create -f environment.yml      # python 3.10, numpy, torch+CUDA, pytest
 conda activate dynamicmultinet
-python -m pytest tests/ -q               # 82 tests, ~15 s
+python -m pytest tests/ -q               # 94 tests, ~24 s
 
 python examples/run_multiplication.py    # experiment 1
 python examples/run_geometry.py          # experiment 2
@@ -49,6 +49,7 @@ python examples/run_robotics.py          # appendix A
 python examples/run_riemann.py           # experiment 4
 python examples/run_montgomery.py        # experiment 5
 python examples/run_finite_height.py      # experiment 6
+python examples/run_navier_stokes.py      # experiment 7
 #   add --quick for a 30 s smoke run, --llm to let Claude drive
 ```
 
@@ -612,6 +613,335 @@ This is very probably **not new** — a 1/log(t) correction is the standard scal
 for finite-height effects here, and published computations reach 10²² where
 this reaches 6×10⁴. What is offered is the measurement, its controls, and a
 pipeline that produced it without being told what to look for.
+
+**Experiment 7 — a published construction, rebuilt as rules**
+(`run_navier_stokes.py`)
+
+The OpenAI preprint constructs a forced Navier–Stokes solution that starts from
+rest, keeps bounded kinetic energy, and becomes unbounded at t = 1 —
+alternatives (C) and (D) of Fefferman's statement, not the unforced (A)/(B).
+This experiment takes the construction rather than its conclusion and rebuilds
+it here, with every named result as a rule.
+
+The results split, and the machine keeps them apart by itself. Six reduce to
+something decidable on an instance, so each is declared **unverified** and then
+checked against an oracle that answers the same question by another route:
+
+```
+result             oracle                         n     acc    base  answers
+energy_budget_3_5  numerical quadrature        1200   1.000   0.003  967 classes
+lemma_4_5_cone     the wave amplitudes solved  1200   1.000   0.832    2 classes
+lemma_4_5_cone     the definition (4.21)       1200   1.000   0.835    2 classes
+lemma_7_4_pulse    integrating the amplitude    400   1.000   0.782    3 classes
+lemma_A6_heat      differencing the field      1200   1.000   0.508    2 classes
+lemma_A1_moments   the determinant, built      1200   1.000   0.531    2 classes
+prop_9_6_decay     iterating the recursion     1200   1.000   0.003 1039 classes
+```
+
+Those counts are not one number applied to everything. Each check gets about
+ten seconds of oracle time, so the count follows the cost — `lemma_10_4`'s
+oracle integrates a stiff system at 0.37 s an instance and gets 160, the
+decay recursion is `Fraction` arithmetic and gets 1200 — and is then capped
+where the generator would start repeating itself. Confidence is
+Laplace-smoothed, so 1200 clean checks report 0.9992 where 160 report 0.9938,
+and that difference is only real if the extra instances were extra
+*questions*.
+
+The cone rule is the one worth reading. Lemma 4.5 says a quadratic inequality
+decides the admissible stress cone; the oracle does not evaluate that
+inequality, it **builds the two pulse families and solves for their squared
+amplitudes**, which is the only reason the cone condition exists. Agreement is
+the lemma, measured.
+
+Perfect agreement is also what a check that cannot fail would print, so the
+run breaks each rule on purpose and reports whether the oracle objects:
+
+```
+rule                one thing made wrong                   caught
+energy_budget_3_5   dissipation threshold -1 -> -3/2        50/1200
+lemma_4_5_cone      quadratic clause dropped               227/1200
+lemma_7_4_pulse     closing rate read mid-slot              92/400
+lemma_A6_heat       exponent allowed to miss by 1/40       486/1200
+lemma_A1_moments    distinctness ignored                   637/1200
+prop_9_6_decay      cycle gain 1/10 -> 1/9                1200/1200
+eq_4_1_exponents    A + D = 1 relaxed to within 1/10       300/600
+increment_identity  divergence-free condition dropped      600/1200
+```
+
+Raising those counts turned up a worse hole than the mutation audit did.
+Confidence is charged per check, and nothing was checking that the checks
+were *different*. The increment identity's generator emitted exactly two
+cells — divergence-free and not — however many instances were asked for, so
+160 checks were two facts and a reported 0.9938. Four more generators had
+saturated less dramatically: 35 summation schedules, 50 Borel schedules, 61
+correction stages, 323 moment families. `verify` now counts distinct inputs
+(pixels where there are pixels, since two renderings of the same caption are
+two questions for a rule that reads them) and charges the rule once per
+question, printing a `NARROW` warning when the repeats outnumber the
+questions four to one. The arithmetic experiment was affected too: 120
+rendered products are 62 distinct expressions.
+
+The generators were then widened until more instances meant more questions —
+the increment oracle now builds its potentials from an index, so each cell is
+a different background, increment and pressure — and the mutation audit was
+re-run to confirm the wider ranges had not thinned out the cases that catch a
+broken rule. One had: spreading the moment weights made accidental repeats
+rare, and repeats are the only instances the "distinctness ignored" mutant
+gets wrong, so the deliberate-collision rate was raised to one half to buy
+the contrast back. The widened check is better on both axes than the original
+(637/1200 caught against 204/400, 1087 distinct against 323).
+
+Parameterizing those potentials also produced, briefly, exactly the kind of
+void check this experiment exists to catch. The first version wrote component
+*i* of each potential without its own coordinate, which makes the field
+divergence-free whatever its frequencies — so the half of the instances that
+are supposed to violate the identity did not, and the rule scored 0.50 with
+every failure a false one. The generator is now explicit about why each
+component depends on all three coordinates.
+
+Writing that audit found a real hole. The heat generator only ever missed the
+exponent by 1/20 or more, so the check could not tell "exactly 1/2+h" from
+"within 1/40" and passed the mutant 160/160. Differencing the field turns out
+to resolve the exponent to about one part in 10⁵ — the relative residual is
+linear in the miss and its noise floor is 4×10⁻⁸ — so the blind spot was in
+the data, not the oracle. With mismatches sampled across decades the same
+mutant now fails 64 times in 160.
+
+Five limits survive the audit and are stated rather than patched: the pulse
+rule and its oracle compute rates from the same function, so an error in the
+rates is invisible to both; the covariance oracle drops the error terms of
+(7.28); the cone's *second* oracle shares the coordinate map (4.20) with the
+rule, which is why the covariance route is the primary one; `prop_9_6_decay`
+checks that a closed form matches its recursion, not that a cycle gains 1/10;
+and the core exponents are definitions written in the module rather than
+measurements of a field.
+
+The other nine results — Theorem 4.6, Propositions 5.5, 7.5, 9.6, 9.9, and the
+localization and comparison of Section 10 — are estimates on function spaces.
+Rather than leave them as citations, `nsmechanisms.py` takes the **method**
+behind each and runs it:
+
+```
+imported step        mechanism carried out here
+thm_4_6_profiles     the residual really does collapse to one profile, on a
+                     divergence-free field built from the exponents (A+D=1)
+prop_5_5_background  the cutoff scales from the paper's own recursion, and
+prop_9_9_summation   the resulting tail measured against (5.35)
+prop_7_5_stress      the covariance integrated from the pulses themselves and
+                     solved for positive squared amplitudes
+prop_9_6_cycle       the cycle's thirteen-term exponent table, enumerated,
+                     against the four closing inequalities the proof states
+prop_10_1_localize   the cutoff applied to the potential before the curl, with
+                     the divergence measured on the transition region
+lemma_10_3_force     the Borel-type extension built and differentiated
+lemma_10_4_energy    the energy identity on a model with the same structure
+lemma_10_5_unique    not attempted; the pressure flux needs Riesz transforms
+```
+
+Each mechanism agrees with its oracle on every instance, at base rates near
+one half because each generator emits both answers — a cutoff schedule that
+works and one that does not, a nonlinearity that cancels in the energy
+identity and one that does not, a curl taken before the cutoff and after.
+
+Two things turned up while writing these. The exponent check first read the
+residual at a single similarity point and passed a mismatched pair, because
+the terms whose exponent depends on `D` cancel against each other near
+η = 1/10 for that profile; it now reads four points and takes the worst, the
+same repair the heat check needed. And the paper's
+closing summary of Proposition 9.6 and its own term table are not
+equivalent:
+for radial derivative losses between 1/29 and 1/25 the summary fails while the
+table still gives the 1/10 gain. The summary is sufficient, not necessary, and
+the run skips that window rather than scoring the difference as an error.
+
+The derivation itself is now chained rather than described. `nsderivation.py`
+writes the correction cycle of Proposition 9.6 as four rules over a cell
+holding the decay orders, one per numbered step of its proof, and the machine
+derives a cycle the way it derives anything:
+
+```
+search over the four steps: found in 4 moves
+  cycle_op1_harmonics  cycle_op2_stress  cycle_op3_mean  cycle_op4_moments
+kept as one rule: 4 primitive steps, confidence 0.0625, UNTRUSTED
+cycle_once: 1.0000 over 1200 checks vs cycle_state_by_closed_form
+after checking: confidence 0.9992, trusted
+ten cycles from the same start: found, 10 moves, confidence 0.9917
+```
+
+That is the architecture's form of transfer. A path is searched for, kept
+under one name by `keep_proof`, checked as a chain, and then reused as a
+single move — so ten cycles is a ten-step proof rather than a forty-step one.
+It also forced a correction to the core: a composite's confidence was the
+product of its members', which is right for a chain nobody has checked and
+wrong once the chain itself has been measured. Four unverified steps price a
+cycle at 1/16; twelve hundred agreements with an oracle outside it say
+something much stronger. `CompositeRule.confidence` now takes the better supported of the
+two, and cannot launder trust, which is a separate flag.
+
+With the cycle and the increment identity in place the whole derivation is a
+chain the machine finds for itself, seventeen moves from the exponent to the
+theorem, and it reports which moves are its own:
+
+```
+the exponents and the energy budget         4 moves, 0 imported
+                                            confidence 0.9992
+profiles, background, the wave increment    3 moves, 2 imported
+                                            1.0000 over 1 measured step, 2 unmeasured
+the stress, then one correction cycle       4 moves, 3 imported
+                                            0.9992 over 1 measured step, 3 unmeasured
+summation, localization, force, comparison  6 moves, 6 imported
+                                            nothing measured, 6 unmeasured steps
+```
+
+The second column is the change that makes those numbers readable. A chain
+used to report one figure, the product over its steps, which for a leg of six
+never-checked estimates is 0.0156 and for the whole derivation 0.0005 — a
+number that looks like a verdict of near-certain failure when what it records
+is that nothing here has read six proofs. `Proof` now carries both: a
+confidence over the steps that have evidence behind them, and a **count** of
+the steps that do not. Ignorance is reported as ignorance instead of being
+compounded into a probability.
+
+The increment identity of Section 3.3 — that adding a divergence-free `w`
+splits the residual into `L_u(w, pi)` and `div(w ⊗ w)` and nothing else — is
+one of the checked moves, verified by building fields, differentiating them,
+and confirming that an increment which is *not* divergence-free leaves the
+`w div(w)` term behind.
+
+### Two steps that are proved, and why only two
+
+Everything above is sampling. A rule is asked questions and compared with an
+oracle, which settles it on the questions asked and says nothing about the
+rest — right for a rule that reads pixels or integrates a field, and wrong
+for a rule whose content is a statement about every case. That is why the
+imported steps stay untrusted however many instances agree.
+
+Two of the paper's derivations are not estimates at all, and both are
+plain enough to carry out here rather than import. One is an identity and
+one is a recursion.
+
+**The increment identity of Section 3.3.** Everything in Sections 7 and 9
+rests on
+
+    R(u+w, p+pi) = R(u, p) + L_u(w, pi) + div(w ⊗ w),
+
+and the derivation is four lines. The time derivative, the Laplacian and
+the pressure gradient are linear and pass through the sum without comment,
+so the whole content is the advection term: expanding
+`(u+w)·∇(u+w)` gives the four products, and the last of them is the
+quadratic flux only up to `w div w`. The two sides therefore differ by
+exactly `-w div w`, which vanishes precisely when the increment is
+divergence-free.
+
+Every step of that is algebra among the values of the field and its first
+derivatives *at a point*. Nothing in a pointwise identity knows that
+`dw0_1` came from differentiating anything — so take those values as
+independent symbols, expand both sides as polynomials, and subtract.
+`symalg.py` does that, and the difference is the zero polynomial, which
+settles the identity at every point of every smooth field with no field
+ever chosen. The defect comes out in closed form rather than as a residual
+that happened to be small, which is why the divergence-free hypothesis is
+visible in the answer instead of assumed. The 1200 differentiated fields
+still run; they now confirm a theorem instead of standing in for one.
+
+**The induction of Proposition 9.6.** This is the exception among the
+uniform claims, and it is worth being exact about why. Its
+content is an *induction*: one correction cycle gains 1/10 in the decay
+order, so σ_j = 1/5 + j/10 at every stage. "Every stage" ranges over the
+non-negative integers, every order the cycle touches is linear in the stage
+index with rational coefficients, and a universally quantified linear
+inequality over such a variable is decidable. So this one claim can be
+decided rather than sampled.
+
+`linarith.py` is that decision procedure. Together with `symalg.py` it sits
+behind `provers.py`, which is the third way a rule can earn its standing,
+alongside oracles and reference chains. The
+cycle is run **once**, with the stage index *and* the radial derivative loss
+both left as variables. Its four moves are the same Python the rules run —
+they call `least` and `short` instead of `min` and `<`, which behave
+identically on numbers and defer on linear forms — so what is proved is the
+rule and not a transcription of it. Eleven inequalities fall out and each is
+decided by reading its coefficients:
+
+```
+PROVED for every stage n >= 0 and every kappa with kappa <= 1/10:
+  11 inequalities, all decided by inspection
+prop_9_6_all_stages: PROVED, exact True, confidence 1.0000
+```
+
+The budget is **derived, not quoted**. Leaving the loss symbolic turns the
+conjunction into an interval, and the interval is κ ≤ 1/10; the binding
+constraint is step 2's stress correction, which costs four radial
+derivatives against the 1/10 the stage must gain. The construction takes
+κ = 1/100000, four orders of magnitude inside it. The closed form (9.8) is
+then a corollary rather than an import.
+
+That confidence of 1.0000 is not a thousand agreements rounded up. There are
+no instances in it, and the library prints such a rule as `PROVED` rather
+than `trusted` so the two cannot be confused.
+
+The guard against the expensive mistake is that the prover has to be able to
+fail, and the tests break both halves to show it does. Move the rule's
+threshold to 1/5 and the proof is refused, naming a loss where rule and
+procedure disagree. Make the first move gain nothing and no budget exists at
+all. Make step 2 cost one derivative instead of four and the derived budget
+widens accordingly — the number follows the moves, not the docstring.
+
+What this does not reach is the whole of the rest. The construction
+quantifies over five things and only one of them is arithmetic:
+
+| quantifier | status |
+|---|---|
+| every correction stage j | **proved** — a rational recursion on an integer index |
+| every point of every smooth field, for the increment identity | **proved** — a polynomial identity in the one-jet |
+| every order of the background expansion | the schedule is decidable the same way; the coefficient bounds it is fed are not |
+| every dyadic band | out of reach — function space norms, not arithmetic |
+| every slow label | out of reach — same |
+| every concentration scale q as q → 0 | out of reach — a limit, not an induction |
+
+So the answer to "can the proof be finished here" is no, and now for a
+sharper reason than before. It is not that more instances are needed. Where
+the paper's derivation is plain — an identity in the one-jet, a rational
+recursion on an integer index — it has been carried out and the result is a
+proof rather than an accuracy. The remaining quantifiers are statements
+about function space norms, and no procedure over the rationals reaches
+them. Finishing would mean formalising the analysis, which is what the Lean
+development does and what this architecture does not attempt.
+
+Two further derivations look plain enough to be worth the same treatment
+and were not attempted here. The cutoff schedule of Lemma 5.4 becomes
+linear in the order once its coefficient growth is written in units of
+log 2, so the threshold quoted in its docstring should be derivable the way
+the cycle's budget was. And the exterior heat solution of Lemma A.6 is an
+explicit formula checked against a PDE, which is symbolic differentiation
+rather than the finite differences it currently gets. Both need machinery
+this package does not have yet; neither would change the verdict, because
+the estimates they are embedded in stay where they are.
+
+None of this makes any of the nine trusted, and that is the finding rather
+than a shortfall. Every one asserts something uniform in the concentration
+scale, the dyadic band, the slow label and the correction stage; a mechanism
+run on instances is not an argument of that shape. So they stay untrusted, at
+the Laplace prior of 1/2 that an unchecked rule deserves:
+
+```
+Theorem 1.1 with trusted rules only:  NOT PROVED (search space exhausted)
+letting the imported steps in:        17 steps, confidence 0.9983 over 6
+                                      measured steps, 11 unmeasured
+```
+
+Eleven unmeasured steps is the machine reporting that it has not read eleven
+proofs. The
+run ends by demonstrating the two gaps rather than asserting them: the cone
+rule answers confidently far outside any shear a profile can produce, and
+11160 decided instances do not reach a statement quantified over every scale,
+band, label and correction stage.
+
+The perception half is the same story as everywhere else here. Drawn on the
+specific tape, the exponent cell is read by `transcribe_unsafe` and the
+five-step chain to the energy verdict goes through; marked `observed`, nothing
+in the library can start, and the reader that would close it is exactly what
+this run does not build.
 
 ## Layout
 

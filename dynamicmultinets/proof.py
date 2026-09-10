@@ -64,6 +64,14 @@ class Proof:
     confidence: float = 1.0
     cost_bits: float = 0.0
     note: str = ""
+    #: Confidence over the steps that have evidence behind them: exact rules
+    #: contribute their 1.0, checked rules their measured accuracy, and
+    #: unmeasured rules contribute nothing rather than the prior 1/2.
+    measured_confidence: float = 1.0
+    #: How many steps used a rule nothing has checked. `confidence` charges
+    #: each of those 1/2, which compounds ignorance into a number that looks
+    #: like a probability; this is the count that number is standing in for.
+    unmeasured: int = 0
 
     @property
     def length(self) -> int:
@@ -76,10 +84,29 @@ class Proof:
     def rule_names(self) -> list[str]:
         return [s.rule for s in self.steps]
 
+    def evidence(self) -> str:
+        """The confidence, said in a way that does not overstate it.
+
+        A chain through steps nobody has checked has no confidence to
+        report, and saying 0.0005 invites the reader to treat compounded
+        ignorance as near-certain failure. What can be said is how reliable
+        the measured part is and how many steps are not measured at all.
+        """
+        if not self.unmeasured:
+            return f"confidence {self.confidence:.4f}"
+        measured = self.length - self.unmeasured
+        if measured <= 0:
+            # Saying "1.0000 over the measured steps" when there are none is
+            # worse than saying nothing, so say nothing.
+            return f"nothing measured, {self.unmeasured} unmeasured steps"
+        plural = "" if measured == 1 else "s"
+        return (f"confidence {self.measured_confidence:.4f} over "
+                f"{measured} measured step{plural}, {self.unmeasured} unmeasured")
+
     def as_text(self) -> str:
         head = (f"{'PROVED' if self.found else 'NOT PROVED'}: {self.start!r} => "
-                f"{self.target!r}  ({self.length} steps, confidence "
-                f"{self.confidence:.4f}, {self.nodes_expanded} nodes expanded)")
+                f"{self.target!r}  ({self.length} steps, {self.evidence()}, "
+                f"{self.nodes_expanded} nodes expanded)")
         body = "\n".join([f"  {self.start!r}"] + [s.line() for s in self.steps])
         tail = f"\n  note: {self.note}" if self.note else ""
         return head + "\n" + body + tail
@@ -151,15 +178,16 @@ def search(
         return Proof(True, start.text, target_text, note="already proved")
 
     counter = itertools.count()
-    # (priority, tiebreak, content, path, confidence, bits)
-    frontier: list[tuple[float, int, Content, list[ProofStep], float, float]] = [
-        (0.0, next(counter), start, [], 1.0, 0.0)
+    # (priority, tiebreak, content, path, confidence, bits, measured, unmeasured)
+    frontier: list[tuple[float, int, Content, list[ProofStep], float, float,
+                         float, int]] = [
+        (0.0, next(counter), start, [], 1.0, 0.0, 1.0, 0)
     ]
     seen: set[tuple[str, str]] = {(start.domain, normalize(start.text))}
     expanded = 0
 
     while frontier and expanded < max_nodes:
-        _, _, cur, path, conf, bits = heapq.heappop(frontier)
+        _, _, cur, path, conf, bits, measured, unmeasured = heapq.heappop(frontier)
         expanded += 1
         if len(path) >= max_depth:
             continue
@@ -182,14 +210,26 @@ def search(
                 # nothing changes for a proof that never needed an alternative.
                 new_conf = conf * rule.confidence() * plausibility
                 new_bits = bits + rule.cost_bits()
+                # A step nobody has checked contributes its count, not its
+                # prior: compounding 1/2 several times says less than saying
+                # how many steps are unmeasured.
+                if rule.measured():
+                    new_measured = measured * rule.confidence() * plausibility
+                    new_unmeasured = unmeasured
+                else:
+                    new_measured = measured * plausibility
+                    new_unmeasured = unmeasured + 1
                 if new_conf < min_confidence:
                     continue
                 if goal(nxt):
                     return Proof(True, start.text, target_text, new_path, nxt,
-                                 expanded, new_conf, new_bits)
+                                 expanded, new_conf, new_bits,
+                                 measured_confidence=new_measured,
+                                 unmeasured=new_unmeasured)
                 priority = len(new_path) + new_bits / BITS_PER_STEP
                 heapq.heappush(frontier, (priority, next(counter), nxt, new_path,
-                                          new_conf, new_bits))
+                                          new_conf, new_bits, new_measured,
+                                          new_unmeasured))
 
     return Proof(False, start.text, target_text, nodes_expanded=expanded,
                  note=("node budget exhausted" if expanded >= max_nodes

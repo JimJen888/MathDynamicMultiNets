@@ -289,6 +289,17 @@ class RenMachine:
         self.note("verify", report.summary().splitlines()[0])
         return report
 
+    def prove_rule(self, rule_name: str, prover: str, **kwargs):
+        """Decide a rule on its whole domain rather than sampling it.
+
+        The rare case. Most rules here are settled by asking them questions;
+        this is for the ones whose content is a statement about every case,
+        where a decision procedure exists. See `provers`.
+        """
+        report = verify_mod.prove_rule(self.library, rule_name, prover, **kwargs)
+        self.note("prove", report.summary().splitlines()[0])
+        return report
+
     def verify_via_rules(self, rule_name: str, reference_chain: Sequence[str],
                          dataset: str, threshold: float = 0.99):
         report = verify_mod.verify_against_rules(self.library, rule_name,

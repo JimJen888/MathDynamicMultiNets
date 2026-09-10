@@ -37,11 +37,16 @@ derivation more often than not.
 
 from __future__ import annotations
 
+import hashlib
+
 from dataclasses import dataclass, field
 from typing import Sequence
 
+import numpy as np
+
 from .dataset import Example, ExampleSet
 from .oracles import ORACLES, label
+from .provers import Judgement, get as get_prover
 from .rules import CompositeRule, Rule, RuleLibrary
 from .tapes import Content
 
@@ -51,6 +56,7 @@ GROUNDING_STRENGTH = {
     "derived": 0.7,         # sound only as far as the rules it leaned on
     "measured": 0.9,        # came from outside
     "definitional": 1.0,    # bottoms out in a definition
+    "proved": 1.0,          # decided on the whole domain, not sampled
     "rule_chain": 0.7,
     # A chain that shares no rule and no training signal with what it checks.
     # Worth nearly as much as a definition, for the reason in `independence`.
@@ -292,6 +298,10 @@ class VerificationReport:
     became_trusted: bool = False
     independence: "Independence | None" = None
     diagnosis: str = ""                     # why nothing was checked, measured
+    #: How many of the `n_checked` checks asked a question no other check in
+    #: the set asked. This is what the rule's confidence is charged for; see
+    #: `_distinct_check`.
+    n_distinct: int = 0
 
     @property
     def accuracy(self) -> float:
@@ -322,8 +332,16 @@ class VerificationReport:
                     + (self.diagnosis or
                        "Usually the reference or the rule expects a different "
                        "input domain."))
-        head = (f"{self.rule}: {self.accuracy:.4f} over {self.n_checked} checks "
+        span = f"{self.n_checked} checks"
+        if self.n_distinct and self.n_distinct < self.n_checked:
+            span += f" ({self.n_distinct} distinct)"
+        head = (f"{self.rule}: {self.accuracy:.4f} over {span} "
                 f"vs {self.source} [{self.grounding}], strength {self.strength:.3f}")
+        if self.n_distinct and self.n_distinct * 4 < self.n_checked:
+            head += (f"\n  NARROW: the generator asked only {self.n_distinct} "
+                     f"different questions in {self.n_checked} examples, so "
+                     f"confidence is charged for {self.n_distinct} and the rest "
+                     f"are repeats")
         if self.confirmed and self.independence.shared_exact:
             head += (f"\n  shares {', '.join(self.independence.shared_exact)} with "
                      f"the reference, which is exact and contributes no error, "
@@ -412,6 +430,107 @@ def _check(rule: Rule, examples: Sequence[Example]) -> tuple[int, int, list[str]
     return n, correct, bad
 
 
+def _instance_key(c: Content) -> str:
+    """What makes two examples the same question.
+
+    Text alone will not do. Two renderings of `8*6` in different fonts are
+    the same caption and different pixels, and for a rule that reads pixels
+    they are two questions, not one. So a cell with an image is keyed by the
+    image, and everything else by its text.
+    """
+    if c.image is None:
+        return c.text
+    return hashlib.blake2b(np.ascontiguousarray(c.image).tobytes(),
+                           digest_size=16).hexdigest()
+
+
+def _distinct_check(rule: Rule,
+                    examples: Sequence[Example]) -> tuple[int, int]:
+    """The same tally, counting each distinct input once.
+
+    A rule here is a function of its input cell, so asking it the same
+    question twice produces the same answer twice and learns nothing the
+    first answer did not already say. That matters because confidence is
+    Laplace-smoothed over the number of checks: a generator that emits two
+    cells a hundred times each would drive a rule to 0.995 on the strength
+    of two facts. The rule is charged for the distinct questions instead,
+    and the report prints both numbers so the gap is visible rather than
+    flattering.
+
+    An input is counted correct only if every copy of it was answered
+    correctly, which for a deterministic rule is all of them or none, and
+    for anything else is the conservative reading.
+    """
+    seen: dict[str, bool] = {}
+    for ex in examples:
+        if not ex.labeled:
+            continue
+        got = rule.apply(ex.inp)
+        ok = (got is not None
+              and normalize(answer_text(got)) == normalize(answer_text(ex.out)))
+        key = _instance_key(ex.inp)
+        seen[key] = ok if key not in seen else (seen[key] and ok)
+    return len(seen), sum(1 for ok in seen.values() if ok)
+
+
+@dataclass
+class ProofReport:
+    """What a prover established about a rule, and what changed as a result."""
+
+    rule: str
+    prover: str
+    judgement: Judgement
+    became_exact: bool = False
+    became_trusted: bool = False
+
+    @property
+    def established(self) -> bool:
+        return self.judgement.established
+
+    def summary(self) -> str:
+        j = self.judgement
+        if not j.established:
+            return (f"{self.rule}: NOT PROVED by {self.prover} -- "
+                    f"{j.obstruction or 'the procedure did not decide it'}")
+        head = f"{self.rule}: PROVED by {self.prover}\n  {j.statement}"
+        head += f"\n  covers {j.covers}"
+        if not j.whole_domain:
+            head += ("\n  which is not the rule's whole domain, so the rule "
+                     "is not marked exact on the strength of it")
+        for line in j.detail[:8]:
+            head += f"\n    {line}"
+        if self.became_exact:
+            head += ("\n  EXACT and trusted: this is not an accuracy over "
+                     "instances, there are no instances in it")
+        return head
+
+
+def prove_rule(library: RuleLibrary, rule_name: str, prover_name: str,
+               **kwargs) -> ProofReport:
+    """Decide a rule on its whole input domain instead of sampling it.
+
+    The one thing this must never become is a way to declare a rule true.
+    A prover is a decision procedure over a fragment, it returns a
+    `Judgement` that has to say what domain it covered, and the rule is
+    marked exact only when that is the rule's entire domain. Anything less
+    is printed and changes nothing.
+    """
+    rule = library.get(rule_name)
+    judgement = get_prover(prover_name)(library, rule, **kwargs)
+    report = ProofReport(rule=rule_name, prover=prover_name, judgement=judgement)
+    if judgement.established and judgement.whole_domain:
+        # Exactness is the claim that the computation cannot be wrong, and
+        # that is precisely what has just been decided. Trust follows, and
+        # `proved` records the statement so a reader can tell this apart
+        # from a rule that agreed with an oracle a thousand times.
+        rule.exact = True
+        rule.trusted = True
+        rule.proved = judgement.statement
+        report.became_exact = True
+        report.became_trusted = True
+    return report
+
+
 def verify_rule(
     library: RuleLibrary,
     rule_name: str,
@@ -445,12 +564,15 @@ def verify_rule(
                          f"generator's output.")
         else:
             diagnosis = why_nothing_ran(rule, example_set.examples)
+    n_distinct, correct_distinct = _distinct_check(rule, example_set.examples)
     report = VerificationReport(
         rule=rule_name, n_checked=n, n_correct=correct,
         grounding=ORACLES[oracle_name].kind, source=oracle_name,
         counterexamples=bad, threshold=threshold, diagnosis=diagnosis,
+        n_distinct=n_distinct,
     )
-    rule.stats.merge(n, correct, oracle_name, bad)
+    # Charged for the distinct questions, not the repeats: see `_distinct_check`.
+    rule.stats.merge(n_distinct, correct_distinct, oracle_name, bad)
     if n and report.accuracy >= threshold:
         rule.trusted = True
         report.became_trusted = True
@@ -534,6 +656,9 @@ def verify_against_rules(
     n = correct = 0
     bad: list[str] = []
     ref_answers: list[str] = []
+    # Same distinct-instance accounting as `verify_rule`: repeats are not
+    # second opinions, so the rule is charged once per question asked.
+    seen: dict[str, bool] = {}
     for ex in example_set.examples:
         want = reference.apply(ex.inp)
         if want is None:
@@ -541,11 +666,17 @@ def verify_against_rules(
         n += 1
         ref_answers.append(normalize(answer_text(want)))
         got = rule.apply(ex.inp)
-        if got is not None and normalize(answer_text(got)) == normalize(answer_text(want)):
+        ok = (got is not None
+              and normalize(answer_text(got)) == normalize(answer_text(want)))
+        key = _instance_key(ex.inp)
+        seen[key] = ok if key not in seen else (seen[key] and ok)
+        if ok:
             correct += 1
         elif len(bad) < 32:
             bad.append(f"{ex.inp.text!r} -> {answer_text(got)!r} "
                        f"(reference {answer_text(want)!r})")
+    n_distinct = len(seen)
+    correct_distinct = sum(1 for v in seen.values() if v)
 
     indep = independence(rule, reference, ref_answers, max_chance=max_chance)
     diagnosis = ("" if n else
@@ -569,9 +700,9 @@ def verify_against_rules(
         source=reference.name, counterexamples=bad,
         threshold=(independent_threshold if indep.independent
                    and independent_threshold is not None else threshold),
-        independence=indep, diagnosis=diagnosis,
+        independence=indep, diagnosis=diagnosis, n_distinct=n_distinct,
     )
-    rule.stats.merge(n, correct, reference.name, bad)
+    rule.stats.merge(n_distinct, correct_distinct, reference.name, bad)
     if n and report.accuracy >= report.threshold:
         rule.trusted = True
         report.became_trusted = True

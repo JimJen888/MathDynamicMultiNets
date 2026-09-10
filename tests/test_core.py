@@ -820,6 +820,423 @@ def test_a_rule_that_writes_a_conclusion_never_offers_its_runner_up():
 
 
 # ---------------------------------------------------------------------------
+# The Navier-Stokes construction, rebuilt as rules
+# ---------------------------------------------------------------------------
+def test_the_construction_rules_stay_out_of_every_other_machine():
+    """A machine built for multiplication must not acquire the admissible
+    stress cone because something else imported it earlier in the process."""
+    from dynamicmultinets.navierstokes import install_navier_stokes_rules
+
+    ns = RenMachine()
+    install_navier_stokes_rules(ns.library)
+    assert "lemma_4_5_cone" in ns.library
+    assert "lemma_4_5_cone" not in RenMachine().library
+
+
+def test_every_checked_result_starts_unverified_and_earns_its_trust():
+    """The six results that reduce to a computation are declared as claims and
+    are worth nothing until an oracle that answers the same question another
+    way has agreed with them. Before that, no proof may use one."""
+    from dynamicmultinets.navierstokes import (CLAIM_DATA, CLAIM_RULES,
+                                               install_navier_stokes_rules)
+
+    m = RenMachine()
+    install_navier_stokes_rules(m.library)
+    assert all(not m.library.get(r).trusted for r in CLAIM_RULES)
+    assert not m.prove("h=1/200", "bounded_energy_unbounded_velocity,h=1/200").found
+
+    for i, (rule, oracle) in enumerate(CLAIM_RULES.items()):
+        generator, params = CLAIM_DATA[rule]
+        m.generate_data(generator, 24, seed=400 + i, name=f"c{i}", **params)
+        report = m.verify(rule, f"c{i}", oracle, threshold=0.99)
+        assert report.accuracy == 1.0, (rule, report.counterexamples[:2])
+        assert m.library.get(rule).trusted
+
+    proof = m.prove("h=1/200", "bounded_energy_unbounded_velocity,h=1/200")
+    assert proof.found and proof.rule_names()[-1] == "energy_budget_3_5"
+
+
+def test_asking_for_more_instances_asks_more_questions():
+    """A generator that saturates turns extra instances into repeats, and
+    repeats do not raise confidence any more -- `verify` charges per
+    distinct question. The one that mattered was the increment identity,
+    whose generator emitted exactly two cells however many were asked for,
+    so 160 checks were two facts and a Laplace value of 0.9938.
+    """
+    from dynamicmultinets.navierstokes import CLAIM_DATA, install_navier_stokes_rules
+    from dynamicmultinets.nsderivation import (DERIVATION_CHECKS,
+                                               install_derivation_rules)
+    from dynamicmultinets.nsmechanisms import (MECHANISM_CHECKS,
+                                               install_mechanism_rules)
+
+    m = RenMachine()
+    install_navier_stokes_rules(m.library)
+    install_mechanism_rules(m.library)
+    install_derivation_rules(m.library)
+
+    sources = {r: (g, p) for r, (g, p) in CLAIM_DATA.items()}
+    for rule, (_, gen) in {**MECHANISM_CHECKS, **DERIVATION_CHECKS}.items():
+        sources.setdefault(rule, (gen, {}))
+
+    for rule, (gen, params) in sources.items():
+        data = m.generate_data(gen, 400, seed=5, name="q", **(params or {}))
+        distinct = len({e.inp.text for e in data})
+        # 400 is the smallest count any check in the run uses, and no
+        # generator may be answering fewer than four fifths of them freshly.
+        assert distinct >= 320, (rule, gen, distinct)
+
+
+# ---------------------------------------------------------------------------
+# Deciding a claim instead of sampling it
+# ---------------------------------------------------------------------------
+def test_linear_arithmetic_decides_and_does_not_sample():
+    """`least` and `short` are `min` and `<` on numbers, so rule code that
+    calls them reads and behaves the same. On linear forms they defer, and
+    the whole conjunction is then decided by reading coefficients."""
+    from fractions import Fraction
+
+    from dynamicmultinets.linarith import Lin, least, obligations, short, solve
+
+    assert least(3, 1, 2) == 1
+    assert short(1, 2) is True and short(2, 1) is False
+
+    n = Lin.var("n")
+    # A form that decreases in an unbounded variable cannot hold throughout.
+    with obligations() as obs:
+        short(Lin(Fraction(5)) - n, Lin(Fraction(0)), "decreasing")
+    assert not solve(obs).feasible
+
+    # One that does not decrease holds, and a parameter is solved for
+    # rather than quantified: 2/5 - 4k >= 0 is k <= 1/10.
+    k = Lin.var("k")
+    with obligations() as obs:
+        short(n + Fraction(2, 5) - 4 * k, Lin(Fraction(0)), "budget")
+    region = solve(obs, parameter="k")
+    assert region.feasible and region.upper == Fraction(1, 10)
+    assert region.lower is None
+    assert region.contains(Fraction(1, 100)) and not region.contains(Fraction(1, 5))
+
+
+def test_symbolic_values_cannot_be_compared_outside_a_proof():
+    """`short` answering False is only sound inside a scope that records
+    what it assumed. Reached anywhere else it would be a silent lie."""
+    from dynamicmultinets.linarith import Lin, short
+
+    with pytest.raises(RuntimeError):
+        short(Lin.var("n"), 0)
+
+
+def test_polynomial_algebra_settles_a_pointwise_identity():
+    """The identity `div(f tensor f) = f.grad f + f div f` is algebra among
+    the field and its first derivatives at a point, so expanding it in
+    independent symbols settles every smooth field at once."""
+    from dynamicmultinets.symalg import (Poly, advect, divergence, jacobian,
+                                         tensor_divergence, vector)
+
+    f, jf = vector("f"), jacobian("f")
+    left = tensor_divergence(f, jf)
+    right = [advect(f, jf)[i] + f[i] * divergence(jf) for i in range(3)]
+    assert all((left[i] - right[i]).is_zero for i in range(3))
+
+    # And it is not vacuous: drop the second term and it stops holding.
+    assert not (left[0] - advect(f, jf)[0]).is_zero
+    assert Poly.sym("a") * Poly.sym("b") == Poly.sym("b") * Poly.sym("a")
+    assert (Poly.constant(2) * Poly.sym("a") - Poly.sym("a")
+            - Poly.sym("a")).is_zero
+
+
+def test_the_increment_identity_is_proved_not_measured():
+    """Section 3.3 is what Sections 7 and 9 rest on, and its derivation is
+    four lines of algebra. Expanding it in the one-jet proves it for every
+    point of every smooth field, and leaves the defect in closed form."""
+    from dynamicmultinets.nsderivation import install_derivation_rules
+
+    m = RenMachine()
+    install_derivation_rules(m.library)
+    report = m.prove_rule("increment_identity",
+                          "increment_identity_by_polynomial_algebra")
+    assert report.established and report.judgement.whole_domain
+    assert "-w div(w)" in report.judgement.statement
+    rule = m.library.get("increment_identity")
+    assert rule.exact and rule.trusted and rule.proved
+    assert rule.confidence() == 1.0
+
+    # A rule that asserted the split unconditionally is refused: the
+    # algebra says the defect is there, so a rule that cannot see it is
+    # not the rule that was proved.
+    m2 = RenMachine()
+    install_derivation_rules(m2.library)
+    broken = m2.library.get("increment_identity")
+    broken.fn = lambda c: Content.abstract("residual_splits_exactly")
+    refused = m2.prove_rule("increment_identity",
+                            "increment_identity_by_polynomial_algebra")
+    assert not refused.established and not broken.exact
+
+
+def test_the_stage_induction_is_proved_and_its_budget_derived():
+    """Proposition 9.6 quantifies over every correction stage, which no
+    number of instances reaches. It also quantifies over a rational
+    recursion on an integer index, which is decidable -- so this one claim
+    is settled by a decision procedure, and the loss the cycle can absorb
+    comes out of the same inequalities instead of being copied in."""
+    from fractions import Fraction
+
+    from dynamicmultinets.nsderivation import (install_derivation_rules,
+                                               prove_cycle_closes_at_every_stage)
+
+    m = RenMachine()
+    install_derivation_rules(m.library)
+
+    proof = prove_cycle_closes_at_every_stage(m.library)
+    assert proof.base_ok and proof.landed and proof.budget.feasible
+    assert proof.budget.upper == Fraction(1, 10)
+    assert proof.closes_at(Fraction(1, 100_000))
+    assert not proof.closes_at(Fraction(1, 5))
+
+    report = m.prove_rule("prop_9_6_all_stages",
+                          "stage_induction_by_linear_arithmetic")
+    assert report.established and report.judgement.whole_domain
+    rule = m.library.get("prop_9_6_all_stages")
+    assert rule.exact and rule.trusted and rule.proved
+    assert rule.confidence() == 1.0
+    # A proved rule is not an accuracy over instances and must not read
+    # like one anywhere.
+    assert "PROVED" in m.library.table()
+
+
+def test_a_proof_fails_when_the_rule_or_the_cycle_is_wrong():
+    """The guard against the expensive mistake. A prover that certified
+    whatever it was handed would be worse than no prover at all, so both
+    halves are broken on purpose here: the rule's threshold, and the moves
+    the threshold is supposed to describe."""
+    from fractions import Fraction
+
+    from dynamicmultinets.linarith import least
+    from dynamicmultinets.nsderivation import (install_derivation_rules,
+                                               prove_cycle_closes_at_every_stage)
+
+    # 1. The rule claims a budget the cycle does not have.
+    m = RenMachine()
+    install_derivation_rules(m.library)
+    rule = m.library.get("prop_9_6_all_stages")
+    rule.fn = lambda c: Content.abstract("cycle_closes_at_every_stage")
+    report = m.prove_rule("prop_9_6_all_stages",
+                          "stage_induction_by_linear_arithmetic")
+    assert not report.established
+    assert "threshold" in report.judgement.obstruction
+    assert not rule.exact and not rule.proved
+
+    # 2. A cycle whose first move gains nothing closes at no stage at all,
+    #    and the prover says so rather than deriving a budget.
+    m2 = RenMachine()
+    install_derivation_rules(m2.library)
+    op1 = m2.library.get("cycle_op1_harmonics")
+
+    def gains_nothing(f):
+        f["B"], f["C"], f["S"] = f["B0"], f["C0"], f["C0"]
+        f["step"] = Fraction(1)
+        return f
+
+    op1.update = gains_nothing
+    assert not prove_cycle_closes_at_every_stage(m2.library).budget.feasible
+
+    # 3. A cheaper stress correction is a different budget, and the derived
+    #    number follows the moves rather than the docstring.
+    m3 = RenMachine()
+    install_derivation_rules(m3.library)
+    op2 = m3.library.get("cycle_op2_stress")
+
+    def cheaper(f):
+        k, b0, c0 = f["k"], f["B0"], f["C0"]
+        f["B"] = least(f["B"], b0 + Fraction(1, 2) - k, b0 + Fraction(2, 5) - k,
+                       b0 + Fraction(1, 2) - 2 * k, 2 * b0 - 3 * k)
+        f["C"] = c0 - 2 * k
+        f["S"] = c0 - 2 * k
+        f["step"] = Fraction(2)
+        return f
+
+    op2.update = cheaper
+    widened = prove_cycle_closes_at_every_stage(m3.library)
+    assert widened.budget.feasible and widened.budget.upper > Fraction(1, 10)
+
+
+def test_the_theorem_is_reachable_only_through_the_imported_estimates():
+    """Every result in the paper is a rule here, so the derivation of Theorem
+    1.1 is a chain the machine can find. Nine of its steps are estimates on
+    function spaces that nothing here checked, so the chain exists and is not
+    a proof: trusted-only search refuses it, and allowing the imports in
+    reports a confidence that is the product of their Laplace priors."""
+    from dynamicmultinets.navierstokes import (IMPORTED_NAMES,
+                                               install_navier_stokes_rules)
+    from dynamicmultinets.nsderivation import (DERIVATION_IMPORTED,
+                                               install_derivation_rules)
+
+    m = RenMachine()
+    install_navier_stokes_rules(m.library)
+    install_derivation_rules(m.library)
+    everything = tuple(IMPORTED_NAMES) + DERIVATION_IMPORTED
+    assert all(not m.library.get(n).trusted for n in everything)
+
+    assert not m.prove("h=1/200", "theorem_1_1_forced_blowup", max_depth=24).found
+    allowed = m.prove("h=1/200", "theorem_1_1_forced_blowup", max_depth=24,
+                      trusted_only=False)
+    assert allowed.found
+    imported = [n for n in allowed.rule_names() if n in everything]
+    assert len(imported) == len(everything)
+    assert allowed.confidence <= 0.5 ** len(imported)
+
+    # The derivation is not a run of citations: it passes through the four
+    # moves of a correction cycle and the wave increment, all of which the
+    # machine applies itself.
+    for move in ("apply_wave_increment", "cycle_op1_harmonics",
+                 "cycle_op4_moments"):
+        assert move in allowed.rule_names()
+
+
+def test_the_scaling_exponents_are_the_ones_the_construction_needs():
+    """A+D=1 is what keeps every transport product at the same power of q, and
+    the energy budget closes exactly when h < 1/6. Both are exact rational
+    arithmetic, so the rules decide them rather than estimating them."""
+    from fractions import Fraction
+
+    from dynamicmultinets.navierstokes import install_navier_stokes_rules
+
+    m = RenMachine()
+    install_navier_stokes_rules(m.library)
+
+    # Ecore = 1/2-3h and Dcore = -1/2-3h fail together, both exactly at
+    # h = 1/6, which is why the paper states that one inequality rather than
+    # two; past it the rule reports whichever it tests first.
+    for h, expected in ((Fraction(1, 200), "bounded_energy_unbounded_velocity"),
+                        (Fraction(1, 5), "energy_does_not_vanish")):
+        cell = Content.abstract(f"h={h}")
+        for name in ("ns_exponents", "ns_core_scales", "ns_core_energy"):
+            cell = m.library.get(name).apply(cell)
+        assert f"Ecore={Fraction(1, 2) - 3 * h}" in cell.text
+        assert f"Dcore={-Fraction(1, 2) - 3 * h}" in cell.text
+        verdict = m.library.get("energy_budget_3_5").apply(cell)
+        assert verdict.text.startswith(expected)
+
+    # h = 1/5 exceeds 1/6, so the dissipation integral diverges and Theorem
+    # 4.6's profiles are unavailable: the derivation stops at the arithmetic.
+    assert m.library.get("thm_4_6_profiles").apply(
+        Content.abstract("bounded_energy_unbounded_velocity,h=1/5")) is None
+
+
+def test_each_imported_estimate_has_its_method_carried_out():
+    """The nine steps the machine cannot check as stated are not left as
+    citations: seven of them have a mechanism here that is built and run.
+    Each mechanism is declared unverified and has to agree with an oracle
+    that carries the construction out."""
+    from dynamicmultinets.navierstokes import (IMPORTED_NAMES,
+                                               install_navier_stokes_rules)
+    from dynamicmultinets.nsderivation import (DERIVATION_IMPORTED,
+                                               install_derivation_rules)
+    from dynamicmultinets.nsmechanisms import (MECHANISM_CHECKS, SUPPORTS,
+                                               install_mechanism_rules)
+
+    m = RenMachine()
+    install_navier_stokes_rules(m.library)
+    install_mechanism_rules(m.library)
+    install_derivation_rules(m.library)
+    assert set(SUPPORTS) == set(IMPORTED_NAMES) | set(DERIVATION_IMPORTED)
+    assert all(not m.library.get(r).trusted for r in MECHANISM_CHECKS)
+
+    for i, (rule, (oracle, generator)) in enumerate(MECHANISM_CHECKS.items()):
+        m.generate_data(generator, 10, seed=900 + i, name=f"mech{i}")
+        report = m.verify(rule, f"mech{i}", oracle, threshold=0.99)
+        assert report.accuracy == 1.0, (rule, report.counterexamples[:2])
+        assert m.library.get(rule).trusted
+
+
+def test_carrying_out_the_methods_does_not_make_the_estimates_trusted():
+    """The point of the split. A mechanism decides an instance; the step it
+    speaks for asserts something uniform in the scale, the band and the
+    stage. Verifying every mechanism must leave every imported step
+    untrusted and Theorem 1.1 out of reach, or the machine would be claiming
+    a proof it does not have."""
+    from dynamicmultinets.navierstokes import (IMPORTED_NAMES,
+                                               install_navier_stokes_rules)
+    from dynamicmultinets.nsmechanisms import (MECHANISM_CHECKS,
+                                               install_mechanism_rules)
+
+    m = RenMachine()
+    install_navier_stokes_rules(m.library)
+    install_mechanism_rules(m.library)
+    for i, (rule, (oracle, generator)) in enumerate(MECHANISM_CHECKS.items()):
+        m.generate_data(generator, 8, seed=950 + i, name=f"m{i}")
+        m.verify(rule, f"m{i}", oracle, threshold=0.99)
+
+    assert all(not m.library.get(n).trusted for n in IMPORTED_NAMES)
+    assert not m.prove("h=1/200", "theorem_1_1_forced_blowup", max_depth=24).found
+
+
+def test_a_chain_checked_as_a_chain_is_not_priced_by_its_parts():
+    """Keeping a derivation as one rule and then checking it is the whole
+    point of composing. Before the check, the chain is worth the product of
+    what is known about its steps, which for unverified steps is the prior
+    1/2 each. After forty agreements with an oracle outside it, the chain's
+    own measurement is the better answer and the compounded prior is not."""
+    from dynamicmultinets.compose import compose
+    from dynamicmultinets.rules import PythonRule
+
+    m = RenMachine()
+    for name in ("shaky_a", "shaky_b"):
+        r = PythonRule(name, lambda c: Content.abstract(c.text),
+                       ABSTRACT, ABSTRACT, source="x->x", exact=False)
+        r.trusted = False
+        m.library.add(r)
+    chain = compose(m.library, ["shaky_a", "shaky_b"], "chained")
+    assert chain.confidence() == 0.25 and not chain.trusted
+
+    chain.stats.merge(40, 40, "an oracle outside the chain", [])
+    assert chain.confidence() > 0.9
+    assert not chain.trusted          # measuring is not the same as trusting
+
+    # A chain of exact rules keeps its 1.0 rather than being pulled down to
+    # the Laplace value of however many times it happened to be checked.
+    exact = compose(m.library, ["decimal_split", "distribute_symbolic"], "value")
+    exact.stats.merge(4, 4, "a small probe", [])
+    assert exact.confidence() == 1.0
+
+
+def test_a_chain_reports_unmeasured_steps_as_a_count_not_a_probability():
+    """Eleven never-checked steps compound to 0.0005, which reads like a
+    verdict of near-certain failure when what it records is that nothing
+    has looked. A proof separates the two: a confidence over the steps
+    that have evidence, and a count of the steps that do not."""
+    from dynamicmultinets.rules import PythonRule
+
+    m = RenMachine()
+    for i in range(3):
+        r = PythonRule(f"leg{i}", (lambda i: lambda c: Content.abstract(
+            f"s{i + 1}") if c.text == f"s{i}" else None)(i),
+            ABSTRACT, ABSTRACT, source=f"s{i}->s{i + 1}", exact=False)
+        r.trusted = False
+        m.library.add(r)
+    p = m.prove("s0", "s3", max_depth=4, trusted_only=False)
+    assert p.found and p.length == 3
+    assert p.confidence == pytest.approx(0.125)      # the bare product
+    assert p.unmeasured == 3
+    assert "nothing measured, 3 unmeasured steps" in p.evidence()
+
+    # Check one leg and it stops being a count.
+    m.library.get("leg1").stats.merge(100, 100, "an oracle", [])
+    p = m.prove("s0", "s3", max_depth=4, trusted_only=False)
+    assert p.unmeasured == 2
+    assert p.measured_confidence == pytest.approx(101 / 102)
+
+
+def test_exactness_counts_as_measured():
+    """An exact rule's 1.0 is not an estimate, so a chain of them has
+    nothing unmeasured about it and reports one number."""
+    m = RenMachine()
+    assert m.library.get("decimal_split").measured()
+    assert not m.library.get("transcribe_unsafe").measured() or \
+        m.library.get("transcribe_unsafe").confidence() >= 1.0
+
+
+# ---------------------------------------------------------------------------
 # Proof search
 # ---------------------------------------------------------------------------
 def test_proof_requires_the_target_domain():
@@ -1008,7 +1425,33 @@ def test_a_rule_can_be_declared_trained_and_verified():
     assert report.n_train > 0 and report.dropped == []
     v = m.verify("reader", "d", "read_back", threshold=1.01)   # unreachable
     assert not v.became_trusted and v.grounding == "constructed"
-    assert m.library.get("reader").stats.n_checked == len(m.datasets["d"].labeled)
+    labeled = len(m.datasets["d"].labeled)
+    assert v.n_checked == labeled
+    # 120 draws from one-digit products repeat, and the renderer is
+    # deterministic, so a repeat is the same pixels and the same question.
+    # The rule's confidence is charged for the questions, not the draws.
+    assert 0 < v.n_distinct < labeled
+    assert m.library.get("reader").stats.n_checked == v.n_distinct
+
+
+def test_repeats_are_not_evidence():
+    """A generator that asks one question a hundred times has asked once.
+
+    Confidence is Laplace-smoothed over the number of checks, so counting
+    repeats would let a two-case generator drive a rule to 0.995 on the
+    strength of two facts. This is the guard for that.
+    """
+    from dynamicmultinets.dataset import Example, ExampleSet
+
+    m = RenMachine()
+    es = ExampleSet(name="repeats", examples=[
+        Example(inp=Content.abstract("2+3")) for _ in range(100)])
+    m.datasets.put(es)
+    report = m.verify("eval_arith", "repeats", "arith_value", threshold=0.99)
+    assert report.n_checked == 100
+    assert report.n_distinct == 1
+    assert m.library.get("eval_arith").stats.n_checked == 1
+    assert "NARROW" in report.summary()
 
 
 @needs_torch
