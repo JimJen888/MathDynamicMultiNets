@@ -292,10 +292,81 @@ def render_geometry(scene: dict) -> np.ndarray:
     return out
 
 
+SPACING_BINS = 24                 # bins over s in [0, SPACING_MAX]
+SPACING_MAX = 3.0
+
+
+def spacing_scene(spacings: np.ndarray, label: str = "") -> dict:
+    """Bin a set of unfolded spacings into the scene a cell is drawn from.
+
+    The binning happens HERE rather than in the renderer so that every cell --
+    random-matrix or zeta -- is reduced by identical code before anything looks
+    at it. If the ensembles were binned one way and the zeta sample another,
+    any difference the rule reported afterwards could be an artefact of the
+    reduction, and that is precisely the comparison this is built to make.
+    """
+    s = np.asarray(spacings, dtype=np.float64)
+    hist, _ = np.histogram(s, bins=SPACING_BINS, range=(0.0, SPACING_MAX),
+                           density=True)
+    edges = np.linspace(0.0, SPACING_MAX, SPACING_BINS + 1)[1:]
+    cdf = np.searchsorted(np.sort(s), edges) / max(len(s), 1)
+    return {"kind": "spacing", "hist": [float(v) for v in hist],
+            "cdf": [float(v) for v in cdf], "n": int(len(s)), "label": label}
+
+
+def render_spacing(scene: dict) -> np.ndarray:
+    """Spacing statistics -> two-view image.
+
+    view A  the density histogram of the unfolded spacings
+    view B  their empirical CDF
+
+    Two views of one sample, and the second is not decoration. What separates
+    these ensembles is the behaviour as s -> 0: the probability of finding two
+    levels very close together goes like s^2 for GUE, like s for GOE, and to a
+    constant for Poisson. In a density histogram that lives entirely in the
+    first two or three bars, where the counts are smallest and the noise is
+    worst. The CDF integrates exactly that region, so the same distinction
+    appears as the shape of a curve leaving the origin rather than as the
+    height of one noisy bar -- and `fa - fb` gets to use both.
+    """
+    hist = np.asarray(scene.get("hist", ()), dtype=np.float64)
+    cdf = np.asarray(scene.get("cdf", ()), dtype=np.float64)
+    out = np.empty((VIEW_H, FULL_W, 3), dtype=np.uint8)
+
+    # A fixed vertical scale, not a per-cell one. Normalising each drawing to
+    # its own maximum would rescale the y axis differently for every sample and
+    # throw away the absolute peak height, which is one of the features that
+    # tells the ensembles apart.
+    top, floor_y = 2.2, VIEW_H - 5
+    view = blank_view()
+    view[floor_y:floor_y + 1, :] = colour("panel")
+    width = max(1, VIEW_W // max(len(hist), 1))
+    for i, v in enumerate(hist):
+        h = int(np.clip(v / top, 0.0, 1.0) * (floor_y - 2))
+        x0 = i * width
+        if h > 0:
+            view[floor_y - h:floor_y, x0:x0 + width - 1] = colour("object")
+    out[:, :SPLIT_W] = view
+
+    view = blank_view()
+    view[floor_y:floor_y + 1, :] = colour("panel")
+    pts = []
+    for i, v in enumerate(cdf):
+        x = int((i + 0.5) / max(len(cdf), 1) * (VIEW_W - 1))
+        y = int(floor_y - np.clip(v, 0.0, 1.0) * (floor_y - 2))
+        pts.append((x, y))
+    for p, q in zip(pts, pts[1:]):
+        draw_line(view, p, q, "highlight", width=2)
+    out[:, SPLIT_W:] = view
+    return out
+
+
 def render_scene(scene: dict) -> np.ndarray:
     """Dispatch a scene dict to the renderer for its kind."""
     if scene.get("kind") == "geometry":
         return render_geometry(scene)
+    if scene.get("kind") == "spacing":
+        return render_spacing(scene)
     return render_sketch(scene)
 
 

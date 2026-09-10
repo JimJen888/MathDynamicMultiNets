@@ -457,12 +457,41 @@ def make_transcribe_unsafe() -> PythonRule:
     """specific -> abstract WITHOUT reading the pixels: it copies the caption
     the renderer stored.
 
-    This is a deliberate cheat, provided only as a baseline/fallback so a
-    workflow can run end to end before the reader net is trained. It is NOT
-    trusted, it is charged as if it were exact, and any chain that uses it is
-    marked in `library_report` -- because a machine that can only "read" what
-    it already wrote has not crossed from the specific domain to the abstract
-    one at all, which is the entire claim of the architecture.
+    Judged as an operation this rule is exact and therefore trusted, on the
+    same terms as every other prior rule: handed a cell it accepts, it returns
+    the right text every time, and there is no measurement that would ever say
+    otherwise. It is a baseline reader, and it is the fallback that lets a
+    workflow run end to end before the reader net is trained.
+
+    What stops it standing in for perception is not a withheld trust flag. It
+    is that it DECLINES ANY CELL MARKED `observed`, and every task in the
+    benchmarks that is really a perception task starts from one. A camera frame
+    carries no caption to copy, so the rule has nothing to say about it, and a
+    machine that owns this rule and no reader still fails `read_screen`,
+    `screen_to_value` and `robin_from_screen`. That is a property of what the
+    rule can do rather than of how it is labelled, which makes it the right
+    place for the guarantee to live.
+
+    One guard in `verify` keeps the accounting honest now that this rule is
+    usable like any other. Checking a reader AGAINST it is the `read_back`
+    check written as a chain: the reference is the reader's own supervision
+    signal rather than a second route, so that comparison is graded
+    `constructed`, the weakest grounding there is, and never reported as an
+    independent route worth 0.95.
+
+    That applies only when the reference reads the caption and the rule under
+    test does not. Two chains that BOTH begin here are independent in the
+    ordinary way, on the same footing as any other shared prior rule: this one
+    is exact, so it hands both of them the same correct text, which is the
+    same input they were already both given, and it adds neither agreement of
+    its own nor a shared mistake. Sharing the basic rules -- read, write,
+    transcribe, the rewrites, the table -- never costs a pair its
+    independence, because none of them can be wrong. What is compared is what
+    the two routes do that they do NOT share.
+
+    So the claim the architecture actually rests on is unchanged and is now
+    carried by mechanism rather than by a label: no chain through this rule
+    ever reads a cell the machine did not write itself.
     """
 
     def fn(c: Content) -> Content | None:
@@ -470,10 +499,11 @@ def make_transcribe_unsafe() -> PythonRule:
             return None
         return Content.abstract(c.text, derivation="transcribed caption")
 
-    r = PythonRule("transcribe_unsafe", fn, SPECIFIC, ABSTRACT,
-                   description="BASELINE ONLY: copy the renderer's caption, no perception",
-                   source="caption(image)->text", exact=False)
-    r.trusted = False
+    r = PythonRule(
+        "transcribe_unsafe", fn, SPECIFIC, ABSTRACT,
+        description="BASELINE: copy the renderer's caption; declines observed cells",
+        source="caption(image)->text", exact=True)
+    r.copies_caption = True             # see the two guards in verify.py
     return r
 
 

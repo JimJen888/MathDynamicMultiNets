@@ -309,6 +309,12 @@ class Interconversion:
     via: list[str] = field(default_factory=list)
     both_ways: bool = False                 # a one-to-one correspondence?
     domain: str = ABSTRACT
+    # As in `propose_rules`: a specific-domain claim about a cell the machine
+    # DREW can be settled by copying the caption, because `transcribe_unsafe`
+    # is a trusted reader of the machine's own handwriting. Set this to pose
+    # the claim about a cell nothing wrote a caption for, which is the version
+    # that needs perception and is usually the one meant.
+    observed: bool = False
     kind: str = "interconversion"
     rationale: str = ""
     proposed_by: str = ""
@@ -329,8 +335,12 @@ class Interconversion:
             # DRAWINGS is a different search from one between two statements,
             # and starting both on the abstract tape would quietly test the
             # easier claim.
-            return (Content.specific_text(a) if self.domain == SPECIFIC
-                    else Content.abstract(a))
+            if self.domain != SPECIFIC:
+                return Content.abstract(a)
+            cell = Content.specific_text(a)
+            if self.observed:
+                cell.meta["observed"] = True
+            return cell
 
         def leg(a: str, b: str) -> str:
             proof = search(machine.library, start(a), b,
@@ -845,6 +855,8 @@ An interconversion element:
     "via": ["<optional suggested rule names>"],
     "both_ways": <true if you claim a one-to-one correspondence>,
     "domain": "abstract" | "specific",
+    "observed": <true for a specific-domain claim about a cell the machine did
+                 NOT draw; without it the caption can be read off>,
     "rationale": "<why these two correspond, in one sentence>"}}
 """
 
@@ -961,6 +973,7 @@ def parse_proposals(text: str, library=None, log: Callable[[str], None] = lambda
                 via=[str(v) for v in (item.get("via") or [])],
                 both_ways=bool(item.get("both_ways")),
                 domain=str(item.get("domain", ABSTRACT)),
+                observed=bool(item.get("observed")),
                 rationale=str(item.get("rationale", "")),
                 proposed_by=proposed_by,
             )

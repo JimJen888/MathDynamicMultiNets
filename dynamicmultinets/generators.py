@@ -241,6 +241,88 @@ def _robin_cases(n: int, rng: np.random.Generator, fail_fraction: float = 0.5,
 
 
 # ---------------------------------------------------------------------------
+# Level spacings: random matrices, and the zeta zeros
+# ---------------------------------------------------------------------------
+# Both generators below produce cells of the SAME shape by the SAME reduction,
+# and that is the only reason a comparison between them means anything. A rule
+# trained on 500-spacing histograms and shown a 2000-spacing one could separate
+# the two on sampling noise alone and would look like it had discovered
+# something. `n_spacings` is therefore a parameter of both, and the experiment
+# passes the same value to each.
+_ZERO_CACHE: dict[int, Any] = {}
+
+
+@generator(
+    "spacing_histograms",
+    "nearest-neighbour level-spacing histograms drawn from a known random-matrix "
+    "ensemble -- training data for a rule that identifies an ensemble by eye",
+    {"n_spacings": "spacings summarised by each drawing (default 500)",
+     "dim": "matrix dimension the eigenvalues come from (default 60)",
+     "ensembles": "which ensembles to draw from (default all three)"},
+)
+def _spacing_histograms(n: int, rng: np.random.Generator, n_spacings: int = 500,
+                        dim: int = 60, ensembles: Any = None) -> list[Example]:
+    from .render import spacing_scene
+    from .zeta import ENSEMBLES, ensemble_spacings
+
+    kinds = list(ensembles) if ensembles else list(ENSEMBLES)
+    out = []
+    for i in range(n):
+        kind = kinds[i % len(kinds)]          # balanced by construction
+        sp = ensemble_spacings(kind, n_spacings, rng, dim=dim)
+        scene = spacing_scene(sp, kind)
+        out.append(Example(
+            # The caption does NOT name the ensemble. The net only ever sees
+            # pixels so it could not read it either way, but `transcribe_unsafe`
+            # copies captions, and a cell carrying its own answer in its text is
+            # a cheat waiting for the one rule that takes it.
+            inp=Content.specific_sketch(scene, caption=f"spacing_{i}", ensemble=kind),
+            meta={"ensemble": kind}))
+    return [out[i] for i in rng.permutation(len(out))]
+
+
+@generator(
+    "zeta_spacings",
+    "the same histogram, built from the actual nontrivial zeros of the Riemann "
+    "zeta function -- data from outside, with NO ensemble label",
+    {"n_spacings": "spacings summarised by each drawing (default 500)",
+     "skip": "zeros to discard before the first block (default 0)"},
+)
+def _zeta_spacings(n: int, rng: np.random.Generator, n_spacings: int = 500,
+                   skip: int = 0) -> list[Example]:
+    """Cells the machine did not invent, and deliberately cannot label.
+
+    Every other generator here is paired with an oracle that knows the answer,
+    because the machine either drew the data or can compute the truth. Not this
+    one: what ensemble the zeta zeros "are" is the open question, so these
+    examples carry no label, `spacing_ensemble` declines them, and any attempt
+    to VERIFY a rule on them reports that nothing was labelled rather than a
+    number. Applying an already-verified rule to them is the only thing that can
+    be done, and what comes back is a conjecture.
+    """
+    from .render import spacing_scene
+    from .zeta import unfolded_spacings, zeta_zeros
+
+    need = skip + n * n_spacings + 1
+    if need not in _ZERO_CACHE:
+        _ZERO_CACHE[need] = zeta_zeros(need)
+    zeros = _ZERO_CACHE[need]
+    spacings = unfolded_spacings(zeros)[skip:]
+
+    out = []
+    for i in range(n):
+        block = spacings[i * n_spacings:(i + 1) * n_spacings]
+        lo = zeros[skip + i * n_spacings]
+        hi = zeros[skip + (i + 1) * n_spacings]
+        scene = spacing_scene(block, f"zeta_{i}")
+        out.append(Example(
+            inp=Content.specific_sketch(scene, caption=f"zeta_t{lo:.0f}-{hi:.0f}",
+                                        source="zeta"),
+            meta={"source": "zeta", "t_lo": float(lo), "t_hi": float(hi)}))
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Robotics (Appendix A)
 # ---------------------------------------------------------------------------
 @generator(

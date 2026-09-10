@@ -41,12 +41,14 @@ end, same `fa - fb` fusion; the head goes from `num_classes` logits to
 ```bash
 conda env create -f environment.yml      # python 3.10, numpy, torch+CUDA, pytest
 conda activate dynamicmultinet
-python -m pytest tests/ -q               # 74 tests, ~5 s
+python -m pytest tests/ -q               # 82 tests, ~15 s
 
 python examples/run_multiplication.py    # experiment 1
 python examples/run_geometry.py          # experiment 2
 python examples/run_robotics.py          # appendix A
 python examples/run_riemann.py           # experiment 4
+python examples/run_montgomery.py        # experiment 5
+python examples/run_finite_height.py      # experiment 6
 #   add --quick for a 30 s smoke run, --llm to let Claude drive
 ```
 
@@ -292,22 +294,36 @@ under test scores a perfect 1.000 and means nothing, so it is refused outright.
 
 Sharing a component is only fatal when its **errors** are shared, which is why
 the guard asks whether each shared rule *can be wrong* rather than merely
-whether it is shared. An exact symbolic rule or a memorised table cannot, so a
-learned route ending in `eval_arith` may be checked against a symbolic route
-ending in `eval_arith`: the two still disagree wherever their perception
-differs, which is exactly what the check is measuring. Refusing that would
-leave every rule that finishes by computing something unverifiable by any
-route. A shared *learned* rule is refused, because its mistakes really do
-appear on both sides.
+whether it is shared. Every rule the machine starts with is exact — reading,
+writing, transcribing, the symbolic rewrites, the memorised table — so two
+routes may share any number of them and still be independent. A learned route
+ending in `eval_arith` may be checked against a symbolic route ending in
+`eval_arith`, and a route that draws a cell and reads it back may be checked
+against another that does the same: the two still disagree wherever the work
+they do *not* share differs, which is exactly what the check is measuring.
+Refusing that would leave every rule that finishes by computing something
+unverifiable by any route. Only a shared *fallible* rule is refused, because
+its mistakes really do appear on both sides.
 
-Trust is also what stops `simplify_library` from optimising the architecture
-away. Two rules that agree on a probe set are candidates for merging, but
-`transcribe_unsafe` agrees with a *real* reader on every cell the machine drew
-itself — it copies the caption — and costs a tenth as many bits. Dropping the
-reader in its favour would leave a machine that cannot read an observed cell at
-all, and the bit count cannot see that. So a rule is never displaced by one the
-machine trusts less, and every applied drop is re-priced on its own and put back
-if the benchmark loses a task.
+One case turns on something other than mistakes, and it is a case of *not*
+sharing. Checking a reader against `transcribe_unsafe` is the `read_back`
+check written as a chain: the reference is the reader's own supervision signal
+rather than a second route, so it is graded `constructed`, the weakest
+grounding on the scale, and never reported as independent. That applies only
+when the reference reads the caption and the rule under test does not. When
+both sides read it, it is common ground like any other basic rule and the
+comparison is between what they do afterwards.
+
+`simplify_library` needs its own guard for the same rule. Two rules that agree
+on a probe set are candidates for merging, and `transcribe_unsafe` agrees with
+a *real* reader on every cell the machine drew itself while costing a tenth as
+many bits. Dropping the reader in its favour would leave a machine that cannot
+read an observed cell at all, and neither the bit count nor the agreement rate
+can see that, because the probe set is made of cells the machine captioned. So
+the two rules are asked again with the probe marked observed, and a rule is
+never displaced by one that answers strictly fewer kinds of cell — nor by one
+the machine trusts less. Every applied drop is then re-priced on its own and
+put back if the benchmark loses a task.
 
 Confidence multiplies along a chain, so ten steps at 0.99 is a 0.90 proof —
 the reason `verify_rule` defaults to a 0.99 threshold rather than something
@@ -498,6 +514,105 @@ becoming a proof. The machine states the remaining step as an untested transfer
 instead of folding it into a chain with a confidence, which is the behaviour
 the architecture is for.
 
+**Experiment 5 — forming a conjecture instead of proving one** (`run_montgomery.py`)
+
+The other thing the architecture is for. Experiment 4 walks up to RH and stops
+at the quantifier; this one does what experimental mathematics does — forms a
+rule where truth is known, applies it where it is not, and reports the result
+as a conjecture.
+
+Montgomery's question: normalise the gaps between consecutive zeta zeros to
+mean 1, and ask what the distribution looks like. The machine samples level
+spacings from three ensembles it can generate and therefore grade itself on
+(GUE, GOE, Poisson), draws each as a histogram + CDF on the specific tape,
+learns a `specific → abstract` **choice** rule naming the ensemble, verifies it,
+then computes the actual zeros by Riemann–Siegel and applies the rule there.
+
+```
+spacing_fresh:   n=300  accuracy 1.000  base rate 0.333  (+0.667)
+spacing_bigdim:  n=150  accuracy 1.000  base rate 0.333  (+0.667)   # 120×120, unseen size
+zeta_blocks:     0 of 40 cells could be labelled — as intended
+                 gue 40/40 (100%),  t ∈ [14, 18047],  20000 spacings
+```
+
+`spacing_ensemble` **declines every zeta cell**, so no verification number can
+be produced for the open question even by accident — the refusal is the feature.
+The rule is verified only where the machine drew the data, and the zeta verdict
+is an application, not a check.
+
+A three-way choice cannot say "none of these", so the run tests typicality
+separately — and the first version of that test was wrong in an instructive
+way. Comparing zeta's 40-block average against *single* 500-spacing GUE draws
+made it look more typically GUE than GUE, which is a sample-size mismatch, not
+a finding. Against the correct null — GUE **group means** over the same 40
+blocks:
+
+```
+zeta vs mean gue 0.686   goe 2.509   poisson 6.560
+gue group means sit 0.161 ± 0.033 from the gue mean (max of 400 draws: 0.255)
+the zeta group mean sits at 0.686 — OUTSIDE, by 2.7× the largest of 400 draws
+lower half  t from    14   L1 to gue mean 0.740
+upper half  t from  9879   L1 to gue mean 0.637
+```
+
+So: far nearer GUE than the alternatives, **and** statistically distinguishable
+from it at these heights — with the deviation shrinking as the zeros climb.
+That is the known slow convergence (Odlyzko needed the 10²⁰-th zero for close
+agreement), recovered from the machine's own data rather than assumed.
+
+What this earns is the verified rule; what it conjectures is the zeta verdict,
+about the nearest-neighbour spacing distribution only — Montgomery's conjecture
+concerns pair correlation, a finer statistic the rule never sees. And the
+conjecture is not new: it is Montgomery–Odlyzko, reached from data by a machine
+told nothing about it, which is the point. A pipeline for generating conjectures
+is worth exactly what it scores on the ones whose answer is already believed.
+
+**Experiment 6 — a rule from data, and a transfer that can be tested**
+(`run_finite_height.py`)
+
+Experiment 5 measured the zeta spacings' deviation from GUE and set it aside.
+This asks whether that leftover is lawful enough to state as a rule:
+
+```
+p_zeta(s; t)  =  p_GUE(s)  +  g(s) / L  +  o(1/L),      L = log(t / 2π)
+```
+
+a fixed shape, amplitude falling as one over the log of the height. The point
+is the contrast with experiment 4: Robin's criterion generalises to an infinite
+family and the transfer can never be run, while this generalises to *higher t*,
+and higher t is reachable. Fit `g` on low bands, predict bands the fit never
+saw. On 80000 zeros to t=61394, fitting below t=33190:
+
+```
+band   L    vs GUE   vs rule   improvement
+4    8.67   0.0748   0.0372       50.3%
+5    8.85   0.0703   0.0466       33.8%
+6    9.00   0.0715   0.0449       37.2%
+7    9.13   0.0682   0.0429       37.1%
+mean                              39.6%
+shuffled-shape null  -46.4% ± 10.5%  (max -14.6%)
+```
+
+The transfer survives, and scrambling `g` across bins makes the fit *worse* —
+so the structure carries the prediction, not the magnitude. The shape says the
+zeros are **more rigid than GUE** at these heights: a deficit of small gaps
+(repulsion stronger than the random-matrix law), an excess near the mean
+spacing, a deficit again in the tail.
+
+Two controls that mattered. The zero scan originally used a fixed step and lost
+~9 zeros in 80000 by t≈60000 — skipped zeros come in *pairs*, so Z's sign
+pattern stays consistent and nothing complains, and what gets skipped is the
+*closest* pairs, which depletes small spacings and imitates the very repulsion
+being measured. `scan_step` now adapts to the local mean gap. And the effect
+needs ~3000 spacings per band to be visible at all (1500/band: +3%, 3000: +37%,
+5000: +47%), so a run that splits too finely reports nothing and means nothing
+by it.
+
+This is very probably **not new** — a 1/log(t) correction is the standard scale
+for finite-height effects here, and published computations reach 10²² where
+this reaches 6×10⁴. What is offered is the measurement, its controls, and a
+pipeline that produced it without being told what to look for.
+
 ## Layout
 
 ```
@@ -530,10 +645,16 @@ Things implemented as described, and things where a choice had to be made:
 
 * **The specific tape really is opaque.** A cell holds pixels; `Content.text`
   is provenance for logging and for supervising a reader. `transcribe_unsafe`
-  (copy the caption) exists as a baseline, is never trusted, and *declines
-  cells marked as observed* — otherwise every perception task would be solvable
-  by reading the machine's own handwriting. Benchmark tasks that matter use
-  observed cells.
+  (copy the caption) exists as a baseline reader and is an ordinary rule in
+  every respect: copying is lossless, so it is exact, its confidence is 1.0 and
+  it is trusted, and it may appear in a proof. What keeps it from standing in
+  for perception is not a label but what it can do — it *declines any cell
+  marked observed*, and every benchmark task that is really a perception task
+  starts from one. A camera frame carries no caption to copy, so a machine
+  holding this rule and no reader still fails `read_screen`, `screen_to_value`
+  and `robin_from_screen`. Two guards in `verify` keep the accounting honest
+  alongside it: a check that leans on this rule is graded as the machine
+  reading back its own handwriting, and two routes that share it are refused.
 * **The distributive rule is discovered, not asserted.** Its oracle checks each
   instance numerically before emitting it, and rejects any that does not hold.
 * **A rule must be trained where it will be USED, and the geometry run is a

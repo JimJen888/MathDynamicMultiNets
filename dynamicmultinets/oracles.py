@@ -219,6 +219,26 @@ def _lagarias_verdict(ex: Example) -> Content | None:
 
 
 # ---------------------------------------------------------------------------
+# Level spacings
+# ---------------------------------------------------------------------------
+@oracle("spacing_ensemble",
+        "which random-matrix ensemble a spacing histogram was drawn from -- "
+        "known because the machine sampled it, and UNDEFINED for the zeta zeros",
+        "constructed", ("gue", "goe", "poisson"))
+def _spacing_ensemble(ex: Example) -> Content | None:
+    """Constructed grounding, with the limit that word carries.
+
+    This oracle is correct about a drawing the machine generated and says
+    nothing whatever about a drawing it did not. That is exactly the property
+    the zeta experiment needs: the zeta cells have no `ensemble` in their meta,
+    so this returns None for them, they stay unlabelled, and no verification
+    number can be produced from them by accident.
+    """
+    kind = ex.meta.get("ensemble") or ex.inp.meta.get("ensemble")
+    return Content.abstract(kind) if kind else None
+
+
+# ---------------------------------------------------------------------------
 # Robotics (Appendix A) -- geometry, not learning
 # ---------------------------------------------------------------------------
 ESCAPE_DIRECTIONS = ("direct", "+x", "-x", "+y", "-y", "+z", "-z")

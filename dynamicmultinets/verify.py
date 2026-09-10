@@ -107,16 +107,22 @@ class Independence:
     because they call for different responses:
 
     `shared_rules`    the reference runs the rule under test, or some FALLIBLE
-                      rule the rule under test also runs. Agreement is then
-                      partly the rule agreeing with itself.
+                      rule the rule under test also runs -- in practice a
+                      learned one, since nothing the machine starts with can
+                      be wrong. Agreement is then partly the rule agreeing
+                      with itself.
     `shared_exact`    shared components that cannot be wrong -- exact symbolic
-                      rules and memorised tables, at confidence 1.0. These are
-                      recorded and do NOT disqualify anything, because what
-                      makes a shared component fatal is that its errors are
-                      shared, and these have none. Two routes that both finish
-                      with `eval_arith` still disagree whenever their
-                      perception differs, which is the whole of what the check
-                      is measuring.
+                      rules and memorised tables, at confidence 1.0. Every
+                      rule the machine starts with is one of these: reading,
+                      writing, transcribing, the rewrites, the table. They are
+                      recorded and do NOT disqualify anything, however many of
+                      them two routes have in common, because what makes a
+                      shared component fatal is that its errors are shared and
+                      these have none. Two routes that both finish with
+                      `eval_arith`, or both begin by drawing a cell and
+                      reading it back, still disagree wherever the work they
+                      do not share differs, which is the whole of what the
+                      check is measuring.
     `shared_oracles`  both were taught by the same oracle, so both learned its
                       errors and will reproduce them together.
     `chance`          the collision probability of the reference's own answers
@@ -125,6 +131,24 @@ class Independence:
                       for nothing; where it writes a sixteen-character
                       expression, coincidental agreement is negligible, and
                       that is what makes agreement worth so much there.
+    `caption_reference`
+                      the reference reads the caption the machine wrote and
+                      the rule under test does NOT. Then the reference is not
+                      a second route at all: it is the supervision signal
+                      wearing a reference's clothes, and agreeing with it
+                      means the rule read back what the renderer was told to
+                      draw. Worth having, and worth `constructed`, not 0.95.
+
+                      Both sides reading the caption is the opposite case and
+                      is fine. A shared copier is exact, so it hands both
+                      routes the same CORRECT text, which is the same input
+                      they were already being given -- it adds no agreement of
+                      its own and no shared mistake. What is being compared is
+                      what the two do afterwards, and if those differ the two
+                      are independent, on the same argument that lets two
+                      routes both finish with `eval_arith`. Neither route
+                      perceives anything in that case, and neither is claiming
+                      to.
     """
 
     shared_rules: list[str] = field(default_factory=list)
@@ -132,10 +156,12 @@ class Independence:
     shared_exact: list[str] = field(default_factory=list)
     chance: float = 0.0
     max_chance: float = 0.05
+    caption_reference: bool = False
 
     @property
     def independent(self) -> bool:
         return (not self.shared_rules and not self.shared_oracles
+                and not self.caption_reference
                 and self.chance <= self.max_chance)
 
     def why_not(self) -> str:
@@ -143,6 +169,9 @@ class Independence:
             return f"the reference runs {', '.join(sorted(self.shared_rules))}"
         if self.shared_oracles:
             return f"both were taught by {', '.join(sorted(self.shared_oracles))}"
+        if self.caption_reference:
+            return ("the reference answers by copying the caption, so this is "
+                    "the machine reading back its own handwriting")
         if self.chance > self.max_chance:
             return (f"answers collide by chance {self.chance:.4f} of the time, "
                     f"over the {self.max_chance} that makes agreement mean anything")
@@ -178,6 +207,20 @@ def fallible(rule: Rule) -> bool:
     return not (rule.trusted and rule.confidence() >= 1.0)
 
 
+def copies_caption(rule: Rule) -> bool:
+    """Does this rule (or anything inside it) get its information about a
+    drawn cell by reading back the caption the machine wrote?
+
+    This is not a defect in the rule and it does not disqualify a check by
+    itself. It matters in exactly one situation, and `independence` is where
+    that situation is decided: when the REFERENCE reads the caption and the
+    rule under test does not, the reference is not a second route at all, it
+    is the supervision signal, and agreeing with it is the machine reading
+    back its own handwriting.
+    """
+    return any(getattr(r, "copies_caption", False) for r in _walk(rule))
+
+
 def _split_shared(rule: Rule, reference: Rule) -> tuple[list[str], list[str]]:
     """Shared primitives, separated into the ones that can be wrong and the
     ones that cannot. Needs the rule objects, so it walks the reference."""
@@ -209,6 +252,10 @@ def independence(rule: Rule, reference: Rule, answers: Sequence[str],
         shared_oracles=sorted(_training_signal(rule) & _training_signal(reference)),
         chance=collision_probability(answers),
         max_chance=max_chance,
+        # Only when the reference reads the caption and the rule does not.
+        # Shared, it is common ground and cancels; unshared, it is the
+        # machine's own handwriting being offered as a second opinion.
+        caption_reference=copies_caption(reference) and not copies_caption(rule),
     )
 
 
@@ -428,9 +475,10 @@ def verify_against_rules(
     rather than quietly producing a number.
 
     How much the agreement is worth depends on whether the reference COULD have
-    disagreed, which `independence` decides on three grounds: no shared rule, no
-    shared training oracle, and answers spread widely enough that coincidence is
-    negligible. When all three hold, agreement is not merely evidence that the
+    disagreed, which `independence` decides on four grounds: no shared rule
+    that can be wrong, no shared training oracle, answers spread widely enough
+    that coincidence is negligible, and the reference not being the rule's own
+    supervision signal in disguise. When all three hold, agreement is not merely evidence that the
     rule matches a reference -- it is evidence the rule is RIGHT, because two
     unrelated routes have no way to land on the same wrong answer. A rewrite
     into a sixteen-character expression makes that argument overwhelming; a rule
@@ -502,9 +550,22 @@ def verify_against_rules(
     indep = independence(rule, reference, ref_answers, max_chance=max_chance)
     diagnosis = ("" if n else
                  why_nothing_ran(rule, example_set.examples, members))
+    # A reference that reads the caption while the rule under test does not is
+    # the `read_back` oracle spelled as a chain, and it is graded the same way:
+    # `constructed`, the weakest thing on the scale. Calling it `rule_chain`
+    # would price the machine's own handwriting at 0.7 on the strength of the
+    # word "rule". When BOTH sides read the caption it is common ground rather
+    # than a second opinion, and the grading falls through to the tails, which
+    # is where the disagreement would have to come from anyway.
+    if indep.caption_reference:
+        grounding = "constructed"
+    elif indep.independent:
+        grounding = "independent_chain"
+    else:
+        grounding = "rule_chain"
     report = VerificationReport(
         rule=rule_name, n_checked=n, n_correct=correct,
-        grounding="independent_chain" if indep.independent else "rule_chain",
+        grounding=grounding,
         source=reference.name, counterexamples=bad,
         threshold=(independent_threshold if indep.independent
                    and independent_threshold is not None else threshold),

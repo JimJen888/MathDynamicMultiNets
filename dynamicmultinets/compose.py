@@ -194,6 +194,33 @@ def distill(
 # ---------------------------------------------------------------------------
 # Making the library smaller
 # ---------------------------------------------------------------------------
+def _loses_observed_cells(loser: Rule, keeper: Rule, probe: ExampleSet) -> bool:
+    """Would dropping `loser` for `keeper` cost the machine cells it can read?
+
+    Agreement on a probe set is agreement on THAT probe set, and the probe is
+    drawn by the machine, so every cell in it carries a caption. A rule that
+    answers by copying the caption therefore matches a real reader everywhere
+    the probe reaches and costs a tenth of the bits -- and putting it in the
+    reader's place leaves a machine that cannot read an observed cell at all.
+    The bit count cannot see that, and the trust flag no longer can either now
+    that the copier is trusted like anything else, so it is measured directly:
+    mark the probe cells observed and ask both rules again.
+
+    Nothing here mentions captions or names a rule. What is protected is
+    COVERAGE -- a rule is never dropped for one that answers strictly fewer
+    kinds of cell -- and the caption copier is just the case where that
+    difference is invisible on the probe set the drop was argued from.
+    """
+    import dataclasses
+
+    answered_loser = answered_keeper = 0
+    for ex in probe.examples[:32]:
+        seen = dataclasses.replace(ex.inp, meta={**ex.inp.meta, "observed": True})
+        answered_loser += loser.apply(seen) is not None
+        answered_keeper += keeper.apply(seen) is not None
+    return answered_loser > answered_keeper
+
+
 @dataclass
 class SimplifyAction:
     kind: str            # "drop_unused" | "drop_duplicate"
@@ -274,6 +301,9 @@ def simplify(
                     continue
                 if library.get(loser).trusted and not library.get(keeper).trusted:
                     continue                     # never trade verified for not
+                if _loses_observed_cells(library.get(loser), library.get(keeper),
+                                         probe):
+                    continue                     # never trade a reader for a copier
                 if apply_changes and not try_drop(loser):
                     continue
                 actions.append(SimplifyAction(

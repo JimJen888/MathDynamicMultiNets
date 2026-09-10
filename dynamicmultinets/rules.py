@@ -142,6 +142,14 @@ class Rule(ABC):
         self.description = description
         self.stats = RuleStats()
         self.trusted = False        # set by verify.py once it clears threshold
+        # True only for a rule that answers by reading back the caption the
+        # machine itself wrote. Such a rule is exact and can be perfectly
+        # trustworthy as an operation, and is still worthless as EVIDENCE: it
+        # tells two routes the same answer instead of confirming either. The
+        # flag is what lets `verify` grade a check that leans on one as
+        # `constructed` and refuse it as an independent route. See
+        # `prior.make_transcribe_unsafe`.
+        self.copies_caption = False
 
     # -- behaviour -----------------------------------------------------------
     @abstractmethod
@@ -210,16 +218,26 @@ class Rule(ABC):
 class PythonRule(Rule):
     """A rule the machine already had -- arithmetic evaluation, rendering, a
     known algebraic identity. Exact by construction, so it is trusted on
-    creation, and cheap to keep."""
+    creation, and cheap to keep.
+
+    `exact` and `trusted` are two different claims and the constructor keeps
+    them apart. `exact` is about the OUTPUT: this function computes the right
+    answer whenever it answers at all, so its confidence is 1.0 and a chain of
+    such rules does not decay. `trusted` is about STANDING: whether the machine
+    is willing to let the rule appear in a proof. They coincide for prior
+    knowledge, which is why `trusted` defaults to `exact`; pass it explicitly
+    for a rule that is one and not the other, such as a hand-written
+    approximation that is allowed in proofs while being known to be off.
+    """
 
     def __init__(self, name: str, fn: Callable[[Content], Content | None],
                  domain_in: str, domain_out: str, description: str = "",
-                 source: str = "", exact: bool = True):
+                 source: str = "", exact: bool = True, trusted: bool | None = None):
         super().__init__(name, domain_in, domain_out, description)
         self.fn = fn
         self.source = source or description
-        self.trusted = exact
         self.exact = exact
+        self.trusted = exact if trusted is None else trusted
 
     def apply(self, content: Content) -> Content | None:
         if not self.applicable(content):
@@ -240,7 +258,10 @@ class PythonRule(Rule):
 
     def confidence(self) -> float:
         # An exact rule is exact; charging it the Laplace prior would make a
-        # four-step chain of known identities look like a coin flip.
+        # four-step chain of known identities look like a coin flip. Note that
+        # this says nothing about `trusted`: an untrusted rule is kept out of
+        # proofs by the trust flag, not by pricing its arithmetic as unreliable
+        # when it is not.
         return 1.0 if self.exact else super().confidence()
 
     def to_manifest(self) -> dict[str, Any]:
@@ -720,7 +741,12 @@ class RuleLibrary:
         rows = [f"{'name':<26}{'map':<22}{'bits':>8}  {'conf':>5}  status"]
         for r in sorted(self.rules.values(), key=lambda r: r.name):
             mapping = f"{r.domain_in}->{r.domain_out}"
-            flag = "trusted" if r.trusted else r.stats.summary()
+            # Untrusted has to be said in words. It used to be legible from
+            # the confidence column, because everything untrusted was also
+            # priced below 1.0; `transcribe_unsafe` is exact and still barred,
+            # so the column alone no longer carries the warning.
+            flag = ("trusted" if r.trusted
+                    else f"NOT TRUSTED, {r.stats.summary()}")
             rows.append(f"{r.name:<26}{mapping:<22}{r.cost_bits():>8.0f}  "
                         f"{r.confidence():>5.2f}  {flag}")
         return "\n".join(rows)

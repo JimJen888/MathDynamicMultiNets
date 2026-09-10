@@ -96,6 +96,94 @@ def test_transcribe_declines_an_observed_cell():
     assert m.library.get("transcribe_unsafe").apply(seen) is None
 
 
+def test_the_caption_copier_is_an_ordinary_trusted_rule():
+    """Copying a caption is lossless, so the baseline reader is exact, its
+    confidence is 1.0, and it is trusted on the same terms as every other
+    prior rule. It reads a cell the machine drew, in a proof, like anything
+    else."""
+    m = RenMachine()
+    r = m.library.get("transcribe_unsafe")
+    assert r.confidence() == 1.0 and r.trusted
+
+    drawn = m.prove("47*83", "47*83", domain=SPECIFIC)
+    assert drawn.found and drawn.rule_names() == ["transcribe_unsafe"]
+    assert drawn.confidence == 1.0
+
+
+def test_what_stops_the_copier_standing_in_for_perception_is_the_observed_flag():
+    """The whole architectural claim now rests here rather than on a withheld
+    trust flag, so it is measured rather than asserted: on a cell nothing wrote
+    a caption for, a machine holding every prior rule and no reader can reach
+    nothing at all."""
+    m = RenMachine()
+    assert not m.prove("47*83", "47*83", domain=SPECIFIC, observed=True).found
+    assert not m.prove("12*30", "360", domain=SPECIFIC, observed=True).found
+
+    # And it is the rule declining, not the search running out of room.
+    seen = Content.specific_text("47*83")
+    seen.meta["observed"] = True
+    assert m.library.get("transcribe_unsafe").apply(seen) is None
+
+    # Which is what keeps the benchmark's perception tasks unsolved: every one
+    # of them starts from an observed cell.
+    m.add_task("read_screen", "47*83", "47*83", domain=SPECIFIC, observed=True)
+    m.add_task("screen_to_value", "12*30", "360", domain=SPECIFIC, observed=True)
+    report = m.report()
+    assert not any(report.solved.values())
+
+
+def test_a_reader_checked_against_the_copier_is_graded_as_handwriting():
+    """Verifying a reader against `transcribe_unsafe` IS the read_back check.
+    It is worth having and it is the weakest grounding on the scale, so it must
+    not come back dressed as an independent second route."""
+    from dynamicmultinets.rules import PythonRule
+    from dynamicmultinets.verify import GROUNDING_STRENGTH, verify_against_rules
+
+    m = RenMachine()
+    m.generate_data("mul_pairs", 24, seed=3, name="probe", domain=SPECIFIC)
+    reader = PythonRule("reader", lambda c: Content.abstract(c.text),
+                        SPECIFIC, ABSTRACT, source="pixels->text", exact=False)
+    m.library.add(reader)
+
+    rep = verify_against_rules(m.library, "reader", ["transcribe_unsafe"],
+                               m.datasets["probe"])
+    assert rep.accuracy == 1.0                      # it agrees perfectly, of course
+    assert rep.grounding == "constructed"
+    assert not rep.independence.independent
+    assert "own handwriting" in rep.independence.why_not()
+    assert (GROUNDING_STRENGTH["constructed"]
+            < GROUNDING_STRENGTH["independent_chain"])
+
+
+def test_two_chains_sharing_only_the_copier_are_independent():
+    """Sharing the caption copier is not sharing an answer. It is exact, so it
+    hands both routes the same correct text -- which is the same input they
+    were both given anyway -- and what is compared is what they do next. The
+    argument is the one that already lets two routes both finish with
+    `eval_arith`."""
+    from dynamicmultinets.compose import compose
+    from dynamicmultinets.verify import fallible, verify_against_rules
+
+    m = RenMachine()
+    m.generate_data("mul_pairs", 24, seed=4, name="probe", domain=SPECIFIC,
+                    a_digits=2, b_digits=2)
+    copier = m.library.get("transcribe_unsafe")
+    assert not fallible(copier)                 # exact, trusted, no errors
+
+    # Read the drawing then evaluate the expression, against read the drawing
+    # then multiply by the definition. The copier is the only thing in common;
+    # the tails are an evaluator and repeated addition.
+    compose(m.library, ["transcribe_unsafe", "eval_arith"], "drawn_value")
+    rep = verify_against_rules(m.library, "drawn_value",
+                               ["transcribe_unsafe", "mul_by_definition"],
+                               m.datasets["probe"])
+    assert rep.n_checked and rep.accuracy == 1.0
+    assert rep.independence.shared_exact == ["transcribe_unsafe"]
+    assert not rep.independence.shared_rules
+    assert rep.independence.independent, rep.independence.why_not()
+    assert rep.grounding == "independent_chain"
+
+
 def test_a_decomposition_can_be_carried_down_to_the_times_table():
     """Splitting only the left factor stops one level above the 9x9 table:
     `46*19 -> 40*19+6*19` and then neither part has two non-zero places on the
@@ -435,10 +523,15 @@ def test_an_interconversion_is_settled_by_searching_for_the_chain():
     assert any("same statement" in x for x in validate(degenerate, m.library))
 
     # The stated domain is honoured: the same claim about DRAWINGS is a
-    # different search, and nothing can read the screen yet.
+    # different search. On a cell the machine drew, the caption copier reads it
+    # and the chain goes through; posed about an OBSERVED cell, which is the
+    # version that needs perception, nothing can start it.
     drawn = Interconversion(name="t4", source="12*30", target="10*30+2*30",
                             domain=SPECIFIC)
-    assert "no chain" in drawn.check(m, max_depth=6)
+    assert "transcribe_unsafe" in drawn.check(m, max_depth=6)
+    seen = Interconversion(name="t5", source="12*30", target="10*30+2*30",
+                           domain=SPECIFIC, observed=True)
+    assert "no chain" in seen.check(m, max_depth=6)
 
     # A suggested route is a hint, so wrong names cost the hint, not the claim.
     hinted = Interconversion(name="t5", source="12*30", target="10*30+2*30",
@@ -536,6 +629,39 @@ def test_sharing_an_exact_rule_is_not_circularity():
     assert rep.independence.shared_exact == ["eval_arith"]
     assert rep.independence.independent             # still counts as independent
     assert "contributes no error" in rep.summary()
+
+
+def test_sharing_the_machine_s_basic_rules_never_defeats_independence():
+    """The general form of the rule above: reading, writing, transcribing and
+    the rest of the prior library are exact, so two routes may share any
+    number of them and still be independent. What is compared is what they do
+    that is NOT shared, and only a shared component that can be wrong puts the
+    same mistake on both sides."""
+    from dynamicmultinets.compose import compose
+    from dynamicmultinets.verify import fallible, verify_against_rules
+
+    m = RenMachine()
+    assert not any(fallible(r) for r in m.library), (
+        "a prior rule that can be wrong would change this policy: "
+        + ", ".join(r.name for r in m.library if fallible(r)))
+
+    m.generate_data("mul_pairs", 20, seed=7, name="d", a_digits=2, b_digits=2,
+                    domain=ABSTRACT)
+
+    # Draw it, read it back, then evaluate -- against draw it, read it back,
+    # decompose, and evaluate. Three basic rules in common, including the write
+    # rule and the read rule, and one real difference.
+    compose(m.library, ["render", "transcribe_unsafe", "eval_arith"],
+            "draw_and_value")
+    rep = verify_against_rules(m.library, "draw_and_value",
+                               ["render", "transcribe_unsafe", "decimal_split",
+                                "distribute_symbolic", "eval_arith"],
+                               m.datasets["d"])
+    assert rep.n_checked and rep.accuracy == 1.0
+    assert rep.independence.shared_exact == ["eval_arith", "render",
+                                             "transcribe_unsafe"]
+    assert not rep.independence.shared_rules
+    assert rep.independence.independent, rep.independence.why_not()
 
 
 def test_sharing_a_fallible_rule_is_still_refused():
@@ -697,11 +823,22 @@ def test_a_rule_that_writes_a_conclusion_never_offers_its_runner_up():
 # Proof search
 # ---------------------------------------------------------------------------
 def test_proof_requires_the_target_domain():
-    """A picture of '47*83' is not a proof of the symbols '47*83'."""
+    """A picture of '47*83' is not a proof of the symbols '47*83'.
+
+    The cell's caption says '47*83' and the target is '47*83', so a goal test
+    that ignored the domain would call this proved before any rule ran. It has
+    to be CROSSED instead, by a rule, and on a cell nothing captioned there is
+    no rule that can.
+    """
     m = RenMachine()
     p = search(m.library, Content.specific_text("47*83"), "47*83",
                target_domain=ABSTRACT)
-    assert not p.found
+    assert p.found and p.length == 1        # crossed, not relabelled
+    assert p.steps[0].domain_in == SPECIFIC and p.steps[0].domain_out == ABSTRACT
+
+    seen = Content.specific_text("47*83")
+    seen.meta["observed"] = True
+    assert not search(m.library, seen, "47*83", target_domain=ABSTRACT).found
 
 
 def test_proof_only_uses_trusted_rules():
@@ -1098,6 +1235,168 @@ def test_the_divisor_chain_cannot_tell_that_a_cell_is_not_an_integer():
     # were a faithful reading of the drawing.
     got = m.library.get("divisor_sum").apply(Content.abstract("847213"))
     assert got is not None and got.text.startswith("sigma(847213)=")
+
+
+# ---------------------------------------------------------------------------
+# Zeta zeros and level spacings (examples/run_montgomery.py)
+# ---------------------------------------------------------------------------
+def test_riemann_siegel_finds_the_published_zeros():
+    """Checked against values computed by a different method entirely.
+
+    The tolerance is the measured accuracy of the leading-correction
+    Riemann-Siegel formula at low t, where it is at its worst: 7.5e-3 absolute
+    at the third zero, falling to ~1e-4 by the thousandth as the asymptotic
+    formula comes into its own. What matters for this package is the error in
+    MEAN-SPACING units, since that is what the histograms are built from --
+    7.5e-3 at t=25 is 1.7e-3 of a mean spacing, against a histogram bin width
+    of 0.125.
+    """
+    from dynamicmultinets.zeta import zeta_zeros
+
+    published = np.array([14.134725142, 21.022039639, 25.010857580,
+                          30.424876126, 32.935061588, 37.586178159])
+    err = np.abs(zeta_zeros(6) - published)
+    assert err.max() < 1e-2
+    # and the error in mean-spacing units, which is the one that could matter
+    density = np.log(published / (2 * np.pi)) / (2 * np.pi)
+    assert float((err * density).max()) < 5e-3
+
+
+def test_the_zero_scan_does_not_skip_any():
+    """Zeros skipped IN PAIRS leave the sign pattern intact, so a scan that
+    steps over two of them looks perfectly healthy. The Riemann-von Mangoldt
+    count is the independent check that catches it."""
+    from dynamicmultinets.zeta import zero_counting_function, zeta_zeros
+
+    z = zeta_zeros(400)
+    assert abs(zero_counting_function(float(z[-1])) - 400) < 1.0
+
+
+def test_unfolding_removes_the_logarithmic_trend():
+    from dynamicmultinets.zeta import unfolded_spacings, zeta_zeros
+
+    s = unfolded_spacings(zeta_zeros(600))
+    # Mean spacing 1 is what unfolding is FOR, and it holds asymptotically
+    # rather than exactly: N(t) is the smooth part of the counting function, so
+    # over a finite block the mean comes out near 1, not at it. Measured at
+    # 1.0004 over 600 zeros.
+    assert abs(float(s.mean()) - 1.0) < 3e-3
+    assert float(s.min()) > 0.0
+    # the trend really is removed: raw gaps shrink with height, unfolded do not
+    raw = np.diff(zeta_zeros(600))
+    assert raw[:100].mean() > 1.5 * raw[-100:].mean()
+    assert 0.8 < s[:100].mean() / s[-100:].mean() < 1.25
+
+
+def test_the_ensembles_are_actually_distinguishable():
+    """If GUE and Poisson spacings did not separate at small s, the rule in
+    run_montgomery.py would be learning noise and scoring on it."""
+    from dynamicmultinets.render import spacing_scene
+    from dynamicmultinets.zeta import ensemble_spacings
+
+    rng = np.random.default_rng(0)
+    gue = np.array(spacing_scene(ensemble_spacings("gue", 4000, rng))["hist"])
+    poisson = np.array(spacing_scene(ensemble_spacings("poisson", 4000, rng))["hist"])
+    # level repulsion: GUE almost never puts two levels on top of each other.
+    assert gue[0] < 0.15 and poisson[0] > 0.5
+
+
+def test_zeta_cells_carry_no_ensemble_label_and_cannot_be_verified():
+    """The property the whole conjecture rests on. If `spacing_ensemble` ever
+    labelled a zeta cell, a verification number could be produced for the open
+    question and would look exactly like the verified ones beside it."""
+    from dynamicmultinets import generators, oracles
+
+    zs = generators.generate("zeta_spacings", 2, seed=0, n_spacings=200)
+    oracles.label(zs, "spacing_ensemble")
+    assert all(not ex.labeled for ex in zs.examples)
+
+    es = generators.generate("spacing_histograms", 3, seed=0, n_spacings=200)
+    oracles.label(es, "spacing_ensemble")
+    assert all(ex.labeled for ex in es.examples)
+    # ...and the cell's own caption must not give the answer away, because
+    # `transcribe_unsafe` copies captions.
+    assert not any(k in es.examples[0].inp.text for k in ("gue", "goe", "poisson"))
+
+
+def test_both_kinds_of_cell_go_through_one_reduction():
+    """Ensemble cells and zeta cells must be binned by identical code, or any
+    difference found later could be an artefact of the reduction."""
+    from dynamicmultinets import generators
+    from dynamicmultinets.render import SPACING_BINS
+
+    a = generators.generate("spacing_histograms", 1, seed=0, n_spacings=200)
+    b = generators.generate("zeta_spacings", 1, seed=0, n_spacings=200)
+    for es in (a, b):
+        scene = es.examples[0].inp.meta["scene"]
+        assert scene["kind"] == "spacing"
+        assert len(scene["hist"]) == SPACING_BINS == len(scene["cdf"])
+        assert es.examples[0].inp.image.shape == (64, 384, 3)
+
+
+def test_the_adaptive_scan_does_not_lose_close_pairs():
+    """The bug this replaced was silent AND biased.
+
+    A fixed step of 0.05 lost ~9 zeros in 80000 by t~60000, because the mean
+    gap shrinks like 1/log(t) while the step did not. Skipped zeros come in
+    pairs, so Z's sign pattern stays consistent and nothing complains -- and
+    what gets skipped is the CLOSEST pairs, which depletes small spacings and
+    imitates level repulsion. Any measurement of a deviation from GUE would
+    have inherited it.
+    """
+    from dynamicmultinets.zeta import scan_step, zeta_zeros, zero_counting_function
+
+    assert scan_step(60000.0) < scan_step(100.0)          # adapts downward
+    z = zeta_zeros(3000)
+    assert abs(zero_counting_function(float(z[-1])) - 3000) < 2.0
+
+
+def test_the_finite_height_deviation_transfers_to_unseen_heights():
+    """The claim of examples/run_finite_height.py, at small scale.
+
+    A shape fitted on low bands must predict higher bands it never saw, and it
+    must do so BECAUSE of its shape: scrambling the bins across s keeps the
+    magnitude and destroys the structure, and has to make the fit worse.
+    """
+    from dynamicmultinets.render import SPACING_BINS, SPACING_MAX
+    from dynamicmultinets.zeta import (ensemble_spacings, unfolded_spacings,
+                                       zeta_zeros)
+
+    ds = SPACING_MAX / SPACING_BINS
+    rng = np.random.default_rng(0)
+
+    def dens(x):
+        h, _ = np.histogram(x, bins=SPACING_BINS, range=(0.0, SPACING_MAX),
+                            density=True)
+        return h
+
+    def l1(x):
+        return float(np.abs(x).sum() * ds)
+
+    p_gue = dens(np.concatenate([ensemble_spacings("gue", 120000, rng, dim=60)
+                                 for _ in range(2)]))
+    # 12000 zeros over 4 bands is 3000 spacings each, and that is not an
+    # arbitrary size: the deviation is ~2x the per-band noise floor, so below
+    # ~3000 it is simply buried. Measured gains, fitting on half and predicting
+    # the rest -- 1500/band: +3%, 3000/band: +37%, 5000/band: +47%.
+    z = zeta_zeros(12000)
+    sp, heights = unfolded_spacings(z), z[1:]
+    edges = np.linspace(0, len(sp), 5).astype(int)
+    Ls, devs = [], []
+    for lo, hi in zip(edges, edges[1:]):
+        t = float(np.exp(np.mean(np.log(heights[lo:hi]))))
+        Ls.append(np.log(t / (2 * np.pi)))
+        devs.append(dens(sp[lo:hi]) - p_gue)
+
+    g = np.mean([devs[i] * Ls[i] for i in range(2)], axis=0)
+    assert abs(float(g.sum() * ds)) < 0.05        # both sides are densities
+
+    gain = float(np.mean([1.0 - l1(devs[i] - g / Ls[i]) / l1(devs[i])
+                          for i in (2, 3)]))
+    shuffled = float(np.mean([1.0 - l1(devs[i] - g[rng.permutation(len(g))] / Ls[i])
+                              / l1(devs[i]) for i in (2, 3)]))
+    assert gain > 0.15          # the fitted shape helps on unseen bands
+    assert gain > shuffled      # ...and it is the shape doing it, not the size
 
 
 if __name__ == "__main__":
