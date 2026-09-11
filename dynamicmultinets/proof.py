@@ -72,6 +72,13 @@ class Proof:
     #: each of those 1/2, which compounds ignorance into a number that looks
     #: like a probability; this is the count that number is standing in for.
     unmeasured: int = 0
+    #: How many steps used a rule that leans on something it does not
+    #: establish -- a classical inequality, or a hypothesis someone
+    #: asserted. Counted separately from `unmeasured` because such a rule
+    #: may be perfectly reliable AS A REWRITE and still carry a premise
+    #: nobody here checked. A chain with any of these is a proof modulo
+    #: its assumptions, and the number is what stops it reading otherwise.
+    assumed: int = 0
 
     @property
     def length(self) -> int:
@@ -92,16 +99,22 @@ class Proof:
         ignorance as near-certain failure. What can be said is how reliable
         the measured part is and how many steps are not measured at all.
         """
-        if not self.unmeasured:
+        if not self.unmeasured and not self.assumed:
             return f"confidence {self.confidence:.4f}"
+        if not self.unmeasured:
+            return (f"confidence {self.confidence:.4f}, resting on "
+                    f"{self.assumed} assumed step"
+                    f"{'' if self.assumed == 1 else 's'}")
         measured = self.length - self.unmeasured
         if measured <= 0:
             # Saying "1.0000 over the measured steps" when there are none is
             # worse than saying nothing, so say nothing.
             return f"nothing measured, {self.unmeasured} unmeasured steps"
         plural = "" if measured == 1 else "s"
+        tail = f", {self.assumed} assumed" if self.assumed else ""
         return (f"confidence {self.measured_confidence:.4f} over "
-                f"{measured} measured step{plural}, {self.unmeasured} unmeasured")
+                f"{measured} measured step{plural}, "
+                f"{self.unmeasured} unmeasured{tail}")
 
     def as_text(self) -> str:
         head = (f"{'PROVED' if self.found else 'NOT PROVED'}: {self.start!r} => "
@@ -178,16 +191,18 @@ def search(
         return Proof(True, start.text, target_text, note="already proved")
 
     counter = itertools.count()
-    # (priority, tiebreak, content, path, confidence, bits, measured, unmeasured)
+    # (priority, tiebreak, content, path, confidence, bits, measured,
+    #  unmeasured, assumed)
     frontier: list[tuple[float, int, Content, list[ProofStep], float, float,
-                         float, int]] = [
-        (0.0, next(counter), start, [], 1.0, 0.0, 1.0, 0)
+                         float, int, int]] = [
+        (0.0, next(counter), start, [], 1.0, 0.0, 1.0, 0, 0)
     ]
     seen: set[tuple[str, str]] = {(start.domain, normalize(start.text))}
     expanded = 0
 
     while frontier and expanded < max_nodes:
-        _, _, cur, path, conf, bits, measured, unmeasured = heapq.heappop(frontier)
+        (_, _, cur, path, conf, bits, measured, unmeasured,
+         assumed) = heapq.heappop(frontier)
         expanded += 1
         if len(path) >= max_depth:
             continue
@@ -213,6 +228,10 @@ def search(
                 # A step nobody has checked contributes its count, not its
                 # prior: compounding 1/2 several times says less than saying
                 # how many steps are unmeasured.
+                # A rule that names something it leans on but does not
+                # establish is counted, however reliable its own rewrite is.
+                new_assumed = assumed + (1 if getattr(rule, "assumes", ())
+                                         else 0)
                 if rule.measured():
                     new_measured = measured * rule.confidence() * plausibility
                     new_unmeasured = unmeasured
@@ -225,11 +244,12 @@ def search(
                     return Proof(True, start.text, target_text, new_path, nxt,
                                  expanded, new_conf, new_bits,
                                  measured_confidence=new_measured,
-                                 unmeasured=new_unmeasured)
+                                 unmeasured=new_unmeasured,
+                                 assumed=new_assumed)
                 priority = len(new_path) + new_bits / BITS_PER_STEP
                 heapq.heappush(frontier, (priority, next(counter), nxt, new_path,
                                           new_conf, new_bits, new_measured,
-                                          new_unmeasured))
+                                          new_unmeasured, new_assumed))
 
     return Proof(False, start.text, target_text, nodes_expanded=expanded,
                  note=("node budget exhausted" if expanded >= max_nodes

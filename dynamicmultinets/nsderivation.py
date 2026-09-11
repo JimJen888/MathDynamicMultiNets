@@ -49,7 +49,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Callable
 
@@ -57,7 +57,8 @@ import numpy as np
 
 from .dataset import Example
 from .generators import generator
-from .linarith import Lin, Region, least, obligations, short, solve
+from .linarith import (Lin, Region, branches, least, obligations, short,
+                       solve)
 from .oracles import oracle
 from .provers import Judgement, prover
 from .symalg import (Poly, advect, divergence, jacobian, tensor_divergence,
@@ -401,6 +402,29 @@ def make_cycle_op3() -> PythonRule:
                  update)
 
 
+#: The gain per cycle the construction claims. Proposition 9.6's 1/10, and
+#: `derive_cycle_gain` below works out how much the four moves would
+#: actually support, which is not the same question.
+CYCLE_GAIN = Fraction(1, 10)
+
+
+def cycle_margins(f: dict) -> tuple:
+    """What each of the three orders gained over one pass of the cycle.
+
+    Factored out of step 4 so that the same expressions both decide the
+    cycle and derive its step size. Step 4 asks whether each gain reaches
+    the value the construction claims. `derive_cycle_gain` asks the
+    question the other way round -- how large a gain these would support --
+    and the answer is their minimum. Asking it that way is the difference
+    between checking a number and finding one.
+    """
+    k, B0, C0 = f["k"], f["B0"], f["C0"]
+    swirl = (C0 - 2 * k) + Fraction(9, 10) - 2 * k
+    return swirl, {"wave order": f["B"] - B0,
+                   "mean order": f["C"] - C0,
+                   "swirl order": swirl - C0}
+
+
 @derivation_rule("cycle_op4_moments")
 def make_cycle_op4() -> PythonRule:
     """Step 4: solve the five radial moment equations, which cancels the
@@ -417,15 +441,17 @@ def make_cycle_op4() -> PythonRule:
 
     def update(f):
         k, B0, C0 = f["k"], f["B0"], f["C0"]
-        f["S"] = (C0 - 2 * k) + Fraction(9, 10) - 2 * k
-        step_up = Fraction(1, 10)
+        swirl, gains = cycle_margins(f)
+        f["S"] = swirl
+        step_up = CYCLE_GAIN
         # `short` is `<` on numbers. Handed linear forms in the stage index
         # it records the guard and answers False, so the prover gets the
         # cycle's conclusion and the hypothesis it rests on separately --
-        # see linarith.
-        if (short(f["B"], B0 + step_up, "wave order gains 1/10")
-                or short(f["C"], C0 + step_up, "mean order gains 1/10")
-                or short(f["S"], C0 + step_up, "swirl order gains 1/10")):
+        # see linarith. The list is built before `any` so all three guards
+        # are recorded rather than short-circuited.
+        fell_short = [short(g, step_up, f"{what} gains {sf(step_up)}")
+                      for what, g in gains.items()]
+        if any(fell_short):
             return None
         f["B0"] = B0 + step_up
         f["C0"] = C0 + step_up
@@ -786,6 +812,75 @@ def _prove_increment_identity(library, rule) -> Judgement:
             "the finite-difference oracle still runs, on 1200 fields; it now "
             "confirms a theorem rather than standing in for one",
         ])
+
+
+@dataclass
+class GainDerivation:
+    """How large a gain per cycle the four moves support, and what caps it."""
+
+    #: (what gained it, the margin as a linear form in the loss) for every
+    #: branch of every unresolved minimum.
+    margins: list
+    binding: tuple                      # (what, form, value) at the loss used
+    kappa: Fraction
+    claimed: Fraction
+    #: Margins that shrink as the stage grows. Any entry here means the
+    #: gain derived at stage zero does not hold forever.
+    slipping: list = field(default_factory=list)
+
+    @property
+    def feasible(self) -> bool:
+        return self.claimed <= self.binding[2]
+
+    def summary(self) -> str:
+        what, form, value = self.binding
+        tail = ("" if not self.slipping else
+                f" NOTE: {len(self.slipping)} margin(s) shrink with the stage, "
+                f"so this gain does not hold forever")
+        return (f"the four moves support a gain of up to {sf(value)} per cycle "
+                f"at kappa={sf(self.kappa)}; the construction takes "
+                f"{sf(self.claimed)}, which is "
+                f"{'inside it' if self.feasible else 'MORE THAN THEY GIVE'}. "
+                f"The cap is the {what}, at {form}.{tail}")
+
+
+def derive_cycle_gain(library, kappa: Fraction = Fraction(1, 100_000),
+                      h: Fraction = Fraction(1, 200)) -> GainDerivation:
+    """Find the cycle's step size instead of being told it.
+
+    Proposition 9.6 gains 1/10 in the decay order per cycle, and until now
+    that 1/10 was written into step 4 and everything downstream took it on
+    faith. It does not have to be. The first three moves do not mention the
+    gain at all: they compute where the orders land. What step 4 then does
+    is compare those against a claimed gain. Run the three moves and ask
+    for the largest gain they would clear, and the number comes out.
+
+    The loss is left symbolic so each margin is a linear form in it, which
+    also says how the answer degrades as the radial derivative loss grows.
+    Evaluating at the construction's loss gives the maximum, and comparing
+    against 1/10 says whether the paper's choice sits inside it and by how
+    much.
+
+    This is a derived quantity rather than a rule verdict, so it is
+    reported and not used to mark anything proved.
+    """
+    moves = [library.get(n) for n in CYCLE_MOVES]
+    state = _symbolic_stage(Lin.var("kappa"), h)
+    for move in moves[:3]:               # the three that do not use the gain
+        state = move.update(dict(state))
+
+    _, gains = cycle_margins(state)
+    margins = [(what, form) for what, g in gains.items() for form in branches(g)]
+
+    # Some margins grow with the stage and none of them shrinks, so stage
+    # zero is the tightest and the gain derived there holds at every later
+    # one. A margin with a negative stage slope would mean the cycle ran
+    # out eventually, which is the same thing the budget prover rules out.
+    slipping = [(what, form) for what, form in margins if form.coeff("n") < 0]
+    valued = [(what, form, form.at(kappa=kappa, n=0).value())
+              for what, form in margins]
+    return GainDerivation(margins=margins, binding=min(valued, key=lambda r: r[2]),
+                          kappa=kappa, claimed=CYCLE_GAIN, slipping=slipping)
 
 
 @prover("stage_induction_by_linear_arithmetic",

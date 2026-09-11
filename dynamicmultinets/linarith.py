@@ -172,6 +172,13 @@ class MinSet:
 
     terms: tuple[Lin, ...]
 
+    def __sub__(self, other: Any) -> "MinSet":
+        # min(t_i) - c = min(t_i - c) for any c, so a shift distributes over
+        # an unresolved minimum without deciding which branch applies.
+        if isinstance(other, (Lin, int, Fraction)):
+            return MinSet(tuple(t - other for t in self.terms))
+        return NotImplemented
+
     def __str__(self) -> str:
         return "min(" + ", ".join(str(t) for t in self.terms) + ")"
 
@@ -185,6 +192,10 @@ def _branches(x: Any) -> tuple[Lin, ...]:
     if isinstance(x, Lin):
         return (x,)
     return (Lin(Fraction(x)),)
+
+
+#: Public name for the branches of a (possibly unresolved) minimum.
+branches = _branches
 
 
 def is_symbolic(x: Any) -> bool:
@@ -201,6 +212,15 @@ class Obligation:
     lower: Symbolic
     bound: Symbolic
     where: str = ""
+    #: True when the guard was a strict inequality. `short` records
+    #: non-strict obligations and `requires` records strict ones; the
+    #: difference matters when the answer is reported as a hypothesis
+    #: rather than solved to an interval.
+    strict: bool = False
+
+    def as_requirement(self) -> str:
+        relation = ">" if self.strict else ">="
+        return f"{self.lower} {relation} {self.bound}"
 
 
 _open_scopes: list[list[Obligation]] = []
@@ -257,6 +277,48 @@ def short(value: Any, bound: Any, where: str = "") -> bool:
         )
     _open_scopes[-1].append(Obligation(value, bound, where))
     return False
+
+
+def requires(value: Any, bound: Any, where: str = "") -> bool:
+    """`value < bound`, as a guard that ACCEPTS when it holds.
+
+    The dual of `short`, and the two are not interchangeable. `short` asks
+    "did this fall short", so a rule declines when it answers True.
+    `requires` asks "is this within the bound", so a rule proceeds when it
+    answers True. Symbolically both record and then answer whichever way
+    lets the rule carry on, because the point of running a rule on
+    symbols is to find out what it would need, not to stop at the first
+    thing that cannot be decided.
+
+    Recorded strictly: the dyadic sum converges when the exponent is below
+    zero, not at zero, and reporting that as a non-strict requirement
+    would be wrong at exactly the boundary the guard exists to exclude.
+    """
+    if not (is_symbolic(value) or is_symbolic(bound)):
+        return value < bound
+    if not recording():
+        raise RuntimeError(
+            "symbolic values reached `requires` outside an obligations() "
+            "scope: the guard would have to be decided here and it cannot be"
+        )
+    _open_scopes[-1].append(Obligation(bound, value, where, strict=True))
+    return True
+
+
+def requirements(obs: Iterable[Obligation]) -> list[str]:
+    """The collected guards, as the hypothesis a derivation would need."""
+    out: list[str] = []
+    for ob in obs:
+        for bound in _branches(ob.bound):
+            for lower in _branches(ob.lower):
+                diff = lower - bound
+                relation = "> 0" if ob.strict else ">= 0"
+                line = f"{diff} {relation}"
+                if ob.where:
+                    line += f"   [{ob.where}]"
+                if line not in out:
+                    out.append(line)
+    return out
 
 
 # ---------------------------------------------------------------------------

@@ -44,6 +44,7 @@ conda activate dynamicmultinet
 python -m pytest tests/ -q               # 107 tests, ~25 s
 
 python examples/run_navier_stokes.py     # experiment 1
+python examples/run_decomposition.py     # experiment 1b
 python examples/run_multiplication.py    # experiment 2
 python examples/run_geometry.py          # experiment 3
 python examples/run_robotics.py          # appendix A
@@ -699,6 +700,136 @@ acceptance window would still have been sitting on a true theorem while
 giving the wrong verdict. The coefficient is `4ε` across `[1/4, 1)`, so its
 achievable values fill `[1, 4)`, and the prover now probes both ends of
 that. A window narrowed to `[1, 2]` is refused, and that is a test.
+
+### The one door in the closed registry
+
+The catalogue tells a controller, in as many words, that it must pick
+generators and oracles by name and cannot write new ones. That is there to
+stop a specific failure: an oracle written by whoever wrote the rule is not
+a second opinion, and verification would become the machine reading its own
+handwriting.
+
+But "written by a human" was never the requirement. The requirement is that
+the thing be checkable, and for one class of rule it is. A band
+inequality's frequency exponent is *forced* by the inequality surviving a
+rescaling of the function, so a proposal either has that exponent or it
+does not, and the machine can tell which. `propose_band_rule` is that door.
+
+A proposal arrives as data, never as code: where the integrability index
+lands, what the proposer claims the frequency costs as coefficients, and
+the classical fact being leaned on. Three kinds of bad proposal are refused
+and none of the refusals trusts the proposer.
+
+```
+bernstein_to_L4    ADMITTED  the honest one
+wrong_exponent     REFUSED   two powers of 1/p where scaling forces three
+smuggles_a_scale   REFUSED   a claim about the concentration scale
+                             rescaling cannot support
+no_assumption      REFUSED   declines to say what it leans on
+```
+
+An admitted rule works immediately. A target in L⁴ that the shipped
+calculus cannot reach is reached through it in three moves, and the
+assumption it rests on comes back out of the chain rather than disappearing
+into it.
+
+What this settles is narrow and worth being exact about. A controller can
+now extend the calculus without being trusted, because the part that could
+be wrong is the part the machine decides. Generators and oracles stay
+closed, where correctness is not decidable and the registry is still doing
+real work. And scaling fixes the exponent of an inequality that is true; it
+does not make one true. An admitted rule is a proved exponent sitting on a
+named assumption, which is exactly the standing of the rules that shipped.
+
+### Granting a hypothesis, on the record
+
+A general theorem in the library is inert until something supplies its
+hypothesis about a specific object. Register "a continuous function on a
+closed interval is bounded" and it chains correctly to integrability in two
+steps, and never fires, because nothing here derives `continuous(u,[0,1])`
+for any object in the construction. Classical theorems are cheap to hold
+and useless without instantiation.
+
+A reader supplies that instantly, and so does a language model: that a curl
+of a smooth potential is smooth is not something anyone rederives. So
+`assume` grants a hypothesis and the controller has a tool for it.
+
+The danger is obvious and the design is entirely about it. An assertion is
+epistemically identical to an import; nothing becomes proved because a
+model said it. And the machinery cannot tell a textbook fact from a paper's
+central estimate, because both arrive as a sentence. So three things
+happen. The asserter says whether the fact is `standard` or
+`construction-specific`. The provenance is recorded, so an LLM-driven run
+can be audited against a scripted one. And every proof that passes through
+one counts it:
+
+```
+PROVED: 'u' => 'integrable(u,[0,1])'
+  (3 steps, confidence 1.0000, resting on 3 assumed steps)
+    assume:continuous(u,[0,1]) -> continuous(u,[0,1])
+    weierstrass                -> bounded(u,[0,1])
+    bounded_integrable         -> integrable(u,[0,1])
+```
+
+`Proof.assumed` counts these separately from `unmeasured`, because a rule
+can be perfectly reliable as a rewrite and still carry a premise nobody
+checked. A conclusion reached this way is a proof modulo its assumptions
+and is never printed as anything else. Granting the thing you were asked to
+prove stays possible and becomes visible, which is the most the machinery
+can do about it.
+
+This also made the existing reports more honest. The norm calculus chain
+used to print `confidence 1.0000`; it now prints `confidence 1.0000,
+resting on 2 assumed steps`, because Bernstein and the geometric series
+were always doing part of the work.
+
+### Two quantities the machine worked out for itself
+
+Everything above checks numbers the paper supplies. These two the machine
+produces, and the distinction is the one that matters for whether an
+architecture like this is doing anything.
+
+**The step size of Proposition 9.6.** The cycle gains 1/10 in the decay
+order per pass, and that 1/10 was written into step 4 with everything
+downstream taking it on faith. It does not have to be. The first three
+moves never mention the gain — they say where the orders land — and step 4
+only compares. Ask instead for the largest gain those three would clear,
+and the number comes out:
+
+```
+the four moves support a gain of up to 17/100 per cycle at kappa=1/100000;
+the construction takes 1/10, which is inside it.
+The cap is the mean order, at 17/100.
+```
+
+Eleven margins, each a linear form in the radial derivative loss. None
+shrinks as the stage grows, so stage zero is the binding case and the gain
+derived there holds at every stage. The paper's choice is conservative, the
+term that caps it is named, and weakening step 3's estimate drags the
+derived gain down with it rather than leaving the docstring's number
+standing. That last part is a test.
+
+**The estimate the derivation would need.** Every chain in the norm
+calculus takes an estimate and carries it forward. Run the same chain with
+the estimate left as variables and the guards report what it would have to
+be:
+
+```
+from est(d=3,dv=0,ip=1/2,fr=<fr>,sc=<sc>)
+  needs -3/2 - fr > 0   [the dyadic sum converges]
+  needs sc > 0          [the bound vanishes at q = 0]
+```
+
+That is `propose_rules` applied to analysis. What comes back is the thing
+worth proving, derived by running the rules rather than by reading them,
+and the −3/2 is Bernstein's `d/p` rather than a constant anyone typed.
+
+Neither is a proof, and neither is the paper's insight. Which construction
+to try, which profile, which pair of pulse families: none of that was found
+here and this experiment does not claim otherwise. What the two show is the
+narrower thing. Where a constant or a hypothesis is already implied by
+rules the machine holds, it can be made to produce it instead of being told
+it.
 
 What this does not reach is the whole of the rest. The construction
 quantifies over five things:

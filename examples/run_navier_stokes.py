@@ -58,7 +58,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from dynamicmultinets import RenMachine, ScriptedController          # noqa: E402
+from dynamicmultinets import (LLMController, RenMachine,             # noqa: E402
+                              ScriptedController)
 from dynamicmultinets.navierstokes import (                          # noqa: E402
     CLAIM_DATA, CLAIM_RULES, IMPORTED_NAMES, MUTATIONS,
     install_navier_stokes_rules)
@@ -67,11 +68,11 @@ from dynamicmultinets.nsmechanisms import (                         # noqa: E402
     install_mechanism_rules)
 from dynamicmultinets.normcalc import (                            # noqa: E402
     RESIDUAL_START, RESIDUAL_TARGET, assumptions_behind, est, glob,
-    install_norm_rules, pair, vanishes)
+    install_norm_rules, pair, propose_band_rule, required_estimate, vanishes)
 from dynamicmultinets.nsderivation import (                         # noqa: E402
     CYCLE_MOVES, DERIVATION_CHECKS, DERIVATION_IMPORTED, DERIVATION_LEGS,
-    DERIVATION_MUTATIONS, initial_state, install_derivation_rules,
-    prove_cycle_closes_at_every_stage, state_after)
+    DERIVATION_MUTATIONS, derive_cycle_gain, initial_state,
+    install_derivation_rules, prove_cycle_closes_at_every_stage, state_after)
 
 #: Every step of the paper the machine carries as a rule and cannot check.
 ALL_IMPORTED = tuple(IMPORTED_NAMES) + DERIVATION_IMPORTED
@@ -560,6 +561,113 @@ def report_norm_derivations(machine: RenMachine) -> None:
     print("  chain of them produces one.")
 
 
+def report_what_was_worked_out(machine: RenMachine) -> None:
+    """Quantities the machine found, rather than ones it was handed.
+
+    Checking a number and finding one are different, and until now almost
+    everything here was the first. These two are the second. Neither is a
+    proof and neither is the paper's insight; what they are is the machine
+    recovering a constant the construction chose, and stating a hypothesis
+    it would need, from rules it already had.
+    """
+    print("\n--- what the machine worked out for itself ---")
+
+    gain = derive_cycle_gain(machine.library)
+    print("  1. The step size of Proposition 9.6, found rather than assumed.")
+    print("     The first three moves never mention the gain; they say where")
+    print("     the orders land. Step 4 compares that against a claimed gain.")
+    print("     Asking instead for the LARGEST gain those three would clear")
+    print("     turns a check into a derivation:")
+    print(f"       {gain.summary()}")
+    print("     Every margin, as a function of the radial derivative loss:")
+    for what, form in gain.margins:
+        value = form.at(kappa=gain.kappa, n=0).value()
+        print(f"       {what:12} {str(form):26} = {value}")
+    print("     No margin shrinks as the stage grows, so stage zero is the")
+    print("     binding one and the gain derived there holds at every stage.")
+    print(f"     The construction's {gain.claimed} is inside that with room, and")
+    print("     the term that caps it is named rather than guessed at.")
+
+    print("\n  2. The estimate the derivation would need, stated as a")
+    print("     hypothesis instead of assumed as a premise.")
+    print("     Every chain so far takes an estimate and carries it forward.")
+    print("     Run the same chain with the estimate left as variables and")
+    print("     the guards say what it would have to be:")
+    start, needed = required_estimate(machine.library)
+    print(f"       from {start}")
+    for line in needed:
+        print(f"         needs {line}")
+    print("     That is the shape of propose_rules applied to analysis: what")
+    print("     comes back is the thing worth proving, derived by running")
+    print("     the rules rather than by reading them.")
+
+    print("\n  Neither is a proof and neither is the paper's insight. Which")
+    print("  construction to try, which profile, which pair of pulse")
+    print("  families -- none of that was found here, and this run does not")
+    print("  claim it was. What these two show is the narrower thing: where")
+    print("  a constant or a hypothesis is implied by rules the machine")
+    print("  already holds, it can be made to produce it instead of being")
+    print("  told it.")
+
+
+def report_the_open_door(machine: RenMachine) -> None:
+    """The one place the closed registry opens, and what keeps it honest.
+
+    The catalogue tells a controller it must pick generators and oracles
+    by name and cannot write new ones. That is there to stop an oracle
+    written by whoever wrote the rule, which is not a second opinion. The
+    reasoning does not apply to a rule the machine can DECIDE, so band
+    inequalities are proposable as data and checked against what rescaling
+    forces.
+    """
+    print("\n--- the one door in the closed registry ---")
+    bernstein = ("Bernstein on a dyadic band, with a constant independent "
+                 "of the band")
+    target = vanishes(d=3, dv=0, ip=Fraction(1, 4))
+    before = machine.prove(RESIDUAL_START, target, max_depth=6)
+    print(f"  a target in L^4: {'reached' if before.found else 'NOT reached'} "
+          f"with the rules the machine shipped with")
+
+    print("\n  A proposal arrives as data: where the index lands, what the")
+    print("  proposer claims the frequency costs, and the classical fact")
+    print("  being leaned on. Nothing executable crosses the boundary.")
+    for name, ip_to, shift, extra, note in (
+            ("bernstein_to_L4", Fraction(1, 4), {"ip": 3, "ip_to": -3, "dv": 1},
+             {}, "the honest one"),
+            ("wrong_exponent", Fraction(0), {"ip": 2, "ip_to": -2, "dv": 1},
+             {}, "two powers of 1/p where scaling forces three"),
+            ("smuggles_a_scale", Fraction(0), {"ip": 3, "ip_to": -3, "dv": 1},
+             {"scale_shift": Fraction(1, 5)},
+             "a claim about the concentration scale rescaling cannot support"),
+            ("no_assumption", Fraction(0), {"ip": 3, "ip_to": -3, "dv": 1},
+             {"assumes": ""}, "declines to say what it leans on")):
+        kwargs = dict(assumes=bernstein)
+        kwargs.update(extra)
+        result = propose_band_rule(machine.library, name, ip_to, shift, **kwargs)
+        print(f"    {name:18} {'ADMITTED' if result.admitted else 'REFUSED':9} "
+              f"{note}")
+
+    after = machine.prove(RESIDUAL_START, target, max_depth=6)
+    print(f"\n  the same L^4 target, after the admitted one: "
+          f"{'reached' if after.found else 'NOT reached'}")
+    for step in after.steps:
+        print(f"    --{step.rule}-->  {step.after}")
+    print("  and the assumption comes back out of the chain rather than")
+    print("  disappearing into it:")
+    for line in assumptions_behind(machine.library, after.rule_names()):
+        print(f"    - {line}")
+
+    print("\n  What this does and does not settle. It lets a controller")
+    print("  extend the calculus without being trusted, because the part")
+    print("  that could be wrong is the part the machine decides. It does")
+    print("  not open generators or oracles, where correctness is not")
+    print("  decidable and the closed registry is still doing real work.")
+    print("  And scaling fixes the exponent of an inequality that is true;")
+    print("  it does not make one true. An admitted rule is a PROVED")
+    print("  exponent sitting on a named assumption, which is exactly the")
+    print("  standing of the rules that shipped with the calculus.")
+
+
 def report_the_two_gaps(machine: RenMachine) -> None:
     """The two things the verified rules still do not give, demonstrated."""
     print("\n--- the two gaps, demonstrated ---")
@@ -611,6 +719,13 @@ def report_the_two_gaps(machine: RenMachine) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--quick", action="store_true", help="fewer instances per check")
+    ap.add_argument("--llm", action="store_true",
+                    help="let Claude drive instead of following the plan. The "
+                         "scripted plan is a fixed sequence I wrote, so every "
+                         "target in it is mine; this is the path where the "
+                         "controller chooses what to check and what to prove.")
+    ap.add_argument("--max-steps", type=int, default=60,
+                    help="tool calls the LLM controller is allowed")
     args = ap.parse_args()
     scale = 0.25 if args.quick else 1.0
 
@@ -627,7 +742,27 @@ def main() -> None:
     machine.add_task("theorem_1_1", f"h={H}", "theorem_1_1_forced_blowup",
                      max_depth=24)
 
-    run = ScriptedController(machine).run(plan(scale))
+    if args.llm:
+        # The reason this path is worth having. Every report below reads the
+        # machine's state rather than the plan, so they work the same whether
+        # the sequence came from me or from the controller -- and the
+        # difference between the two runs is exactly the question of whether
+        # anything here can choose its own targets.
+        try:
+            run = LLMController(machine, max_steps=args.max_steps).run(GOAL)
+        except Exception as err:                       # credentials, usually
+            name = type(err).__name__
+            if "Auth" not in name and "APIConnection" not in name:
+                raise
+            print(f"\nthe LLM controller could not reach the API ({name}).")
+            print("Set ANTHROPIC_API_KEY, or log in with `ant auth login`, and")
+            print("run again. Everything below works either way -- the reports")
+            print("read the machine's state, not the plan -- so the scripted")
+            print("sequence runs now and the run is the reference the LLM path")
+            print("is compared against.\n")
+            run = ScriptedController(machine).run(plan(scale))
+    else:
+        run = ScriptedController(machine).run(plan(scale))
 
     print("\n" + "=" * 78)
     print(run.summary())
@@ -647,6 +782,8 @@ def main() -> None:
     report_mechanisms(machine)
     report_what_was_proved(machine)
     report_norm_derivations(machine)
+    report_what_was_worked_out(machine)
+    report_the_open_door(machine)
     report_sensitivity(machine)
     report_the_two_gaps(machine)
 

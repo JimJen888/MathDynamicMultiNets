@@ -226,6 +226,57 @@ def build_tools(m: RenMachine) -> dict[str, Tool]:
     def prove_rule(rule: str, prover: str) -> str:
         return m.prove_rule(rule, prover).summary()
 
+    @tool("assume",
+          "Grant a hypothesis the machine cannot establish, so a general "
+          "theorem in the library can bite on a specific object. Use it for "
+          "facts you actually know -- that a curl is divergence-free, that a "
+          "finite sum of smooth functions is smooth. Say in 'standing' "
+          "whether it is 'standard' (in any textbook) or "
+          "'construction-specific' (a claim about the objects at hand). "
+          "Everything assumed is reported: every proof through it says how "
+          "many assumed steps it took and names them. Granting the thing "
+          "you were asked to prove will therefore be visible, not clever.",
+          {"cell": _STR, "because": _STR, "standing": _STR},
+          ["cell", "because"])
+    def assume(cell: str, because: str,
+               standing: str = "construction-specific") -> str:
+        r = m.assume(cell, because, source="controller", standing=standing)
+        return (f"assumed {cell!r} [{standing}]. Any proof using it will "
+                f"report an assumed step and surface: {r.assumes[0]}")
+
+    @tool("propose_band_rule",
+          "Add a NEW band inequality to the norm calculus, as data rather "
+          "than code. You may do this even though you cannot write "
+          "generators or oracles, because the machine can DECIDE whether "
+          "this kind of rule is right: the frequency exponent of a band "
+          "inequality is forced by the inequality surviving a rescaling of "
+          "the function, so a wrong one is refused with both exponents "
+          "printed. Give where the integrability index lands (ip_to, as "
+          "1/p, so 0 is L-infinity), what you claim the frequency costs as "
+          "coefficients over ip, ip_to and the derivative count, and the "
+          "classical fact you are leaning on. That assumption is NOT "
+          "checked and is reported at the end of every chain that uses the "
+          "rule.",
+          {"name": _STR, "ip_to": _STR, "assumes": _STR,
+           "shift_ip": _STR, "shift_ip_to": _STR, "shift_dv": _STR,
+           "shift_const": _STR, "derivative_change": _STR,
+           "scale_shift": _STR, "description": _STR},
+          ["name", "ip_to", "assumes"])
+    def propose_band_rule(name: str, ip_to: str, assumes: str,
+                          shift_ip: str = "3", shift_ip_to: str = "-3",
+                          shift_dv: str = "1", shift_const: str = "0",
+                          derivative_change: str = "0",
+                          scale_shift: str = "0",
+                          description: str = "") -> str:
+        from .normcalc import propose_band_rule as _propose
+
+        return _propose(
+            m.library, name, ip_to,
+            {"ip": shift_ip, "ip_to": shift_ip_to, "dv": shift_dv,
+             "const": shift_const},
+            derivative_change=derivative_change, scale_shift=scale_shift,
+            assumes=assumes, description=description).summary()
+
     @tool("verify_against_rules",
           "Check a rule against a chain of rules the machine already trusts, "
           "instead of an oracle. Use this when a learned rule should agree with "

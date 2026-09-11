@@ -289,6 +289,49 @@ class RenMachine:
         self.note("verify", report.summary().splitlines()[0])
         return report
 
+    def assume(self, cell: str, because: str, source: str = "asserted",
+               standing: str = "construction-specific"):
+        """Grant a hypothesis the machine cannot establish, on the record.
+
+        There is a real use for this and a real way to abuse it, and the
+        difference is entirely whether it is visible afterwards.
+
+        The use: a general theorem in the library is inert until something
+        supplies its hypothesis about a specific object. "The curl of a
+        smooth potential is divergence-free" is a fact a competent reader
+        or a language model supplies instantly and nothing here derives.
+        Without a way to grant it, every classical theorem sits unused.
+
+        The abuse: granting the thing to be proved. The machinery cannot
+        tell a textbook fact from a paper's central estimate, because both
+        arrive as a sentence. So `standing` makes the asserter say which
+        they think it is, every proof through the result reports how many
+        assumed steps it took, and the assumption text comes back out of
+        the chain. A conclusion reached this way is a proof modulo its
+        assumptions and is never reported as anything else.
+
+        `source` records who asserted it, so an LLM-driven run can be
+        audited against a scripted one.
+        """
+        from .rules import PythonRule
+        from .tapes import ABSTRACT
+
+        target = Content.abstract(cell.strip())
+        name = f"assume:{cell.strip()}"
+
+        def fn(c: Content) -> Content | None:
+            # An axiom is reachable from anywhere, which is what makes it
+            # an axiom rather than an inference step.
+            return None if c.domain != ABSTRACT or c.text == target.text else target
+
+        rule = PythonRule(name, fn, ABSTRACT, ABSTRACT,
+                          description=f"assumed [{standing}, {source}]: {because}",
+                          source=f"* -> {cell.strip()}", exact=True, trusted=True)
+        rule.assumes = (f"{because}  [{standing}, asserted by {source}]",)
+        self.library.add(rule, replace=True)
+        self.note("assume", f"{cell.strip()} [{standing}, {source}]")
+        return rule
+
     def prove_rule(self, rule_name: str, prover: str, **kwargs):
         """Decide a rule on its whole domain rather than sampling it.
 

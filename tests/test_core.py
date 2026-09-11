@@ -973,6 +973,171 @@ def test_the_increment_identity_is_proved_not_measured():
     assert not refused.established and not broken.exact
 
 
+def test_the_cycle_gain_is_derived_not_assumed():
+    """Proposition 9.6's step size was written into step 4 and taken on
+    faith downstream. The first three moves never mention it: they say
+    where the orders land. Asking for the largest gain they would clear
+    turns the check into a derivation, and the answer has to be at least
+    the gain the construction claims."""
+    from fractions import Fraction
+
+    from dynamicmultinets.nsderivation import (CYCLE_GAIN, derive_cycle_gain,
+                                               install_derivation_rules)
+
+    m = RenMachine()
+    install_derivation_rules(m.library)
+    gain = derive_cycle_gain(m.library)
+
+    assert gain.feasible and gain.claimed == CYCLE_GAIN
+    what, _, largest = gain.binding
+    assert largest == Fraction(17, 100)
+    assert what == "mean order"
+    assert largest > CYCLE_GAIN          # the paper's choice is conservative
+
+    # Stage zero is only the binding case because nothing gets tighter
+    # later. A margin that shrank with the stage would mean the derived
+    # gain did not hold forever, and the report has to say so.
+    assert gain.slipping == []
+
+    # Make step 3's mean estimate worse and the derived gain follows it
+    # down rather than staying at the number in the docstring.
+    m2 = RenMachine()
+    install_derivation_rules(m2.library)
+    op3 = m2.library.get("cycle_op3_mean")
+    original = op3.update
+
+    def weaker(f):
+        out = original(f)
+        out["C"] = f["C0"] + Fraction(1, 50)
+        return out
+
+    op3.update = weaker
+    worse = derive_cycle_gain(m2.library)
+    assert worse.binding[2] == Fraction(1, 50)
+    assert not worse.feasible            # 1/10 no longer fits
+
+
+def test_the_machine_states_the_estimate_it_would_need():
+    """The other half of a derivation: not carrying an estimate forward
+    but saying what one would have to be. Running the chain with the
+    estimate left as variables makes the guards report a hypothesis."""
+    from fractions import Fraction
+
+    from dynamicmultinets.normcalc import install_norm_rules, required_estimate
+
+    m = RenMachine()
+    install_norm_rules(m.library)
+
+    _, needed = required_estimate(m.library, ip=Fraction(1, 2))
+    text = " ; ".join(needed)
+    # Bernstein costs d/p in frequency, so an L^2 band estimate has to
+    # start below -3/2 for the dyadic sum to converge afterwards.
+    assert "-3/2 - fr > 0" in text
+    assert "sc > 0" in text
+
+    # A uniform estimate pays nothing to Bernstein, so the requirement
+    # moves to zero. The number is derived from the rules, not typed.
+    _, uniform = required_estimate(m.library, ip=Fraction(0))
+    assert "-fr > 0" in " ; ".join(uniform)
+
+
+def test_an_asserted_hypothesis_is_usable_and_never_invisible():
+    """A general theorem is inert until something supplies its hypothesis
+    about a specific object, and nothing here derives such a thing. So a
+    hypothesis can be granted, and the whole safety of that rests on it
+    being impossible to hide afterwards."""
+    from dynamicmultinets.rules import PythonRule
+
+    m = RenMachine()
+
+    def bounded_is_integrable(c: Content) -> Content | None:
+        if not c.text.startswith("bounded("):
+            return None
+        return Content.abstract("integrable" + c.text[len("bounded"):])
+
+    theorem = PythonRule("bounded_integrable", bounded_is_integrable,
+                         ABSTRACT, ABSTRACT, source="bounded(f)->integrable(f)",
+                         exact=True, trusted=True)
+    theorem.assumes = ("a bounded measurable function on a finite measure "
+                       "set is integrable",)
+    m.library.add(theorem)
+
+    # Inert: the theorem is held and nothing reaches its premise.
+    assert not m.prove("u", "integrable(u)", max_depth=4).found
+
+    m.assume("bounded(u)", "u is a curl of a smooth compactly supported "
+                           "potential", source="LLM", standing="standard")
+    proof = m.prove("u", "integrable(u)", max_depth=4)
+    assert proof.found
+
+    # The whole point: it cannot read as a clean proof.
+    assert proof.assumed == 2
+    assert "assumed" in proof.evidence()
+    assert "confidence 1.0000" != proof.evidence()
+
+    # And the provenance survives into the report.
+    granted = m.library.get("assume:bounded(u)")
+    assert "asserted by LLM" in granted.assumes[0]
+    assert "standard" in granted.assumes[0]
+
+
+def test_a_proposed_rule_is_admitted_only_if_the_machine_can_check_it():
+    """The door in the closed registry, and why it is safe to open here.
+
+    Generators and oracles stay closed because an oracle written by
+    whoever wrote the rule is not a second opinion. That reasoning does
+    not apply to a rule whose correctness is DECIDABLE, and a band
+    inequality is one: rescaling the function forces its exponent. So a
+    proposal arrives as data, the machine checks it, and a wrong one is
+    refused rather than trusted.
+    """
+    from fractions import Fraction
+
+    from dynamicmultinets.normcalc import (assumptions_behind, est,
+                                           install_norm_rules,
+                                           propose_band_rule, vanishes)
+
+    bernstein = "Bernstein on a band, constant independent of the band"
+    m = RenMachine()
+    install_norm_rules(m.library)
+
+    start = est(d=3, dv=0, ip=Fraction(1, 2), fr=Fraction(-3), sc=Fraction(1, 5))
+    target = vanishes(d=3, dv=0, ip=Fraction(1, 4))
+    assert not m.prove(start, target, max_depth=6).found
+
+    good = propose_band_rule(m.library, "bernstein_to_L4", Fraction(1, 4),
+                             {"ip": 3, "ip_to": -3, "dv": 1},
+                             assumes=bernstein)
+    assert good.admitted
+
+    # An admitted rule is usable immediately, and its assumption comes
+    # back out of any chain that went through it.
+    after = m.prove(start, target, max_depth=6)
+    assert after.found and "bernstein_to_L4" in after.rule_names()
+    assert any("Bernstein" in a
+               for a in assumptions_behind(m.library, after.rule_names()))
+
+    # Three ways a proposal is refused, and none of them trusts the
+    # proposer. A wrong exponent, a claim about the concentration scale
+    # that rescaling does not support, and an unnamed assumption.
+    wrong = propose_band_rule(m.library, "wrong", Fraction(0),
+                              {"ip": 2, "ip_to": -2, "dv": 1},
+                              assumes=bernstein)
+    assert not wrong.admitted and "forces" in wrong.reason
+
+    smuggled = propose_band_rule(m.library, "smuggled", Fraction(0),
+                                 {"ip": 3, "ip_to": -3, "dv": 1},
+                                 scale_shift=Fraction(1, 5), assumes=bernstein)
+    assert not smuggled.admitted and "concentration scale" in smuggled.reason
+
+    silent = propose_band_rule(m.library, "silent", Fraction(0),
+                               {"ip": 3, "ip_to": -3, "dv": 1})
+    assert not silent.admitted and "leans on" in silent.reason
+
+    for refused in ("wrong", "smuggled", "silent"):
+        assert refused not in m.library.rules
+
+
 def test_the_carrier_balance_holds_for_every_epsilon():
     """Section 7.2 needs the viscous coefficient in [1, 4] at any eps the
     construction picks, which is a continuum and so was never in reach of
