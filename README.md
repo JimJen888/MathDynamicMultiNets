@@ -741,6 +741,36 @@ real work. And scaling fixes the exponent of an inequality that is true; it
 does not make one true. An admitted rule is a proved exponent sitting on a
 named assumption, which is exactly the standing of the rules that shipped.
 
+### Conjunction, and the experiment that found it missing
+
+Taking one of the eleven apart turned up a gap I had not predicted, which
+is the main reason the experiment was worth running. `run_decomposition.py`
+writes Proposition 9.9 as the steps a reader would write and asks the
+machine to find a rule justifying each link.
+
+The first version scored three of ten and blamed missing inference rules.
+It was wrong: it had the decomposition as a **list**, which silently gave
+one step the wrong premise. Proofs are graphs. Fixing the shape raised the
+count to six of eight and exposed the actual obstacle.
+
+The obstacle was that a proof here was a **chain**: one rule, one cell, one
+successor. The final step of Proposition 9.9 follows from four facts
+established separately, and there was nowhere to put a collecting step.
+Nearly every real argument ends in one, so a single failing link badly
+understated it.
+
+`JoinRule` states a rule with several premises, and `saturate` derives a
+**set** of cells instead of walking a path, applying every rule that fires
+until the target appears or the budget runs out. The accounting survives
+the change of search: a conclusion collected from assumed premises still
+reports them. With it the decomposition reaches **seven of eight**, and the
+one remaining failure is that smoothness of the summed field has no cell.
+
+That is the only gap in this conversation that went from named to fixed.
+The rest of what the experiment found is unchanged: of the five things the
+decomposition assumes, four are setup and one is an L² band estimate for a
+correction, which is the analytic content and which nothing here derives.
+
 ### Granting a hypothesis, on the record
 
 A general theorem in the library is inert until something supplies its
@@ -1195,7 +1225,8 @@ dynamicmultinets/
                  expanding them in the one-jet
   normcalc.py    function space norms as rules: exponents derived from
                  scaling, analytic content assumed by name
-  proof.py       best-first search over rule chains, across domains
+  proof.py       best-first search over rule chains, plus `saturate`:
+                 derives a SET of cells, which is what a conjunction needs
   compose.py     composition, distillation, the objective J, simplification
   halting.py     the statistical anytime algorithm (§5)
   machine.py     RenMachine: state + operations

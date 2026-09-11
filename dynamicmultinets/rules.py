@@ -335,6 +335,77 @@ class TableRule(Rule):
 # ---------------------------------------------------------------------------
 # Learned rules
 # ---------------------------------------------------------------------------
+class JoinRule(Rule):
+    """Several premises, one conclusion: the shape a chain cannot express.
+
+    Every other rule here maps one cell to one cell, and a proof is a path
+    through them. Real proofs are not paths. They end by collecting things
+    established separately -- "the tail is flat, the field is smooth, the
+    residual vanishes, therefore the theorem" -- and a path has nowhere to
+    put that step. The decomposition experiment found this the hard way:
+    of the links it could not validate, the one that mattered was the final
+    conjunction, and it blocks the last step of nearly every real argument.
+
+    `premises` are the exact cells that must ALL be established. That is
+    narrower than pattern matching and it is the right first scope: a
+    conjunction in a proof names what it is collecting, and exact premises
+    make the search a dictionary lookup instead of a combinatorial one.
+
+    `apply` returns None always, so best-first path search ignores these
+    and keeps the behaviour it had. They are found by `proof.saturate`,
+    which derives a SET of cells rather than walking a path.
+    """
+
+    def __init__(self, name: str, premises: Sequence[str], conclusion: str,
+                 domain_in: str = ABSTRACT, domain_out: str = ABSTRACT,
+                 description: str = "", exact: bool = True,
+                 trusted: bool | None = None):
+        super().__init__(name, domain_in, domain_out, description)
+        if len(premises) < 2:
+            raise ValueError("a join needs at least two premises; one premise "
+                             "is an ordinary rule and belongs in the chain")
+        self.premises = tuple(p.strip() for p in premises)
+        self.conclusion = conclusion.strip()
+        self.source = f"{' + '.join(self.premises)} -> {self.conclusion}"
+        self.exact = exact
+        self.trusted = exact if trusted is None else trusted
+
+    @property
+    def arity(self) -> int:
+        return len(self.premises)
+
+    def apply(self, content: Content) -> Content | None:
+        return None                  # never fires on a single cell
+
+    def fires(self, known: dict[str, Content]) -> Content | None:
+        """The conclusion, when every premise has been established."""
+        if any(p not in known for p in self.premises):
+            return None
+        return Content.abstract(
+            self.conclusion,
+            derivation=f"collecting {', '.join(self.premises)}")
+
+    def confidence(self) -> float:
+        # Same reasoning as PythonRule: collecting established facts under
+        # a stated conjunction is exact as an operation, so charging it the
+        # Laplace prior would make every proof that ends in a conjunction
+        # look unknown. Whether the conjunction is SOUND is `assumes` and
+        # `trusted`, which are separate and reported separately.
+        return 1.0 if self.exact else super().confidence()
+
+    def cost_bits(self) -> float:
+        return 8.0 * max(len(self.source), 8)
+
+    def expects(self) -> str:
+        return f"all of: {', '.join(self.premises)}"
+
+    def to_manifest(self) -> dict[str, Any]:
+        m = super().to_manifest()
+        m["premises"] = list(self.premises)
+        m["conclusion"] = self.conclusion
+        return m
+
+
 @dataclass
 class Recipe:
     """How a learned rule was made -- and how it could be remade.

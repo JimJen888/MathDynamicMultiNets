@@ -1041,6 +1041,66 @@ def test_the_machine_states_the_estimate_it_would_need():
     assert "-fr > 0" in " ; ".join(uniform)
 
 
+def test_a_conjunction_needs_a_set_not_a_path():
+    """A proof collects things established separately and then combines
+    them, and a chain has nowhere to put that step. `JoinRule` states it
+    and `saturate` finds it by deriving a SET of cells instead of walking
+    a path."""
+    from dynamicmultinets import JoinRule
+    from dynamicmultinets.rules import PythonRule
+
+    m = RenMachine()
+    for src, dst in (("p", "P"), ("q", "Q")):
+        m.library.add(PythonRule(
+            f"step_{src}", (lambda d: lambda c: Content.abstract(d)
+                            if c.text == src else None)(dst),
+            ABSTRACT, ABSTRACT, source=f"{src}->{dst}"))
+    m.library.add(JoinRule("collect", ["P", "Q"], "R",
+                           description="P and Q together give R"))
+
+    # A path cannot get there: neither branch alone reaches R.
+    assert not m.prove("p", "R", max_depth=4).found
+    assert not m.prove("q", "R", max_depth=4).found
+
+    got = m.derive(["p", "q"], "R", max_rounds=4)
+    assert got.found
+    assert got.rule_names()[-1] == "collect"
+    # Every premise appears before the step that uses it.
+    assert got.rule_names().index("step_p") < got.rule_names().index("collect")
+
+    # A join declines until every premise is there.
+    assert not m.derive(["p"], "R", max_rounds=4).found
+    assert JoinRule("c", ["P", "Q"], "R").apply(Content.abstract("P")) is None
+    with pytest.raises(ValueError):
+        JoinRule("one", ["P"], "R")          # one premise is a chain step
+
+
+def test_saturation_keeps_the_same_accounting():
+    """A conclusion collected from assumed premises is still assumed, and
+    the count has to survive the change of search."""
+    from dynamicmultinets import JoinRule
+    from dynamicmultinets.rules import PythonRule
+
+    m = RenMachine()
+    shaky = PythonRule("shaky", lambda c: Content.abstract("P")
+                       if c.text == "p" else None, ABSTRACT, ABSTRACT,
+                       source="p->P", exact=False)
+    shaky.trusted = True
+    m.library.add(shaky)
+    m.library.add(PythonRule("solid", lambda c: Content.abstract("Q")
+                             if c.text == "q" else None, ABSTRACT, ABSTRACT,
+                             source="q->Q"))
+    leaning = JoinRule("collect", ["P", "Q"], "R", description="P and Q give R")
+    leaning.assumes = ("something classical nobody checked here",)
+    m.library.add(leaning)
+
+    got = m.derive(["p", "q"], "R", max_rounds=4)
+    assert got.found
+    assert got.unmeasured == 1          # `shaky` has never been checked
+    assert got.assumed == 1             # the join leans on something
+    assert "unmeasured" in got.evidence() and "assumed" in got.evidence()
+
+
 def test_an_asserted_hypothesis_is_usable_and_never_invisible():
     """A general theorem is inert until something supplies its hypothesis
     about a specific object, and nothing here derives such a thing. So a

@@ -31,8 +31,8 @@ from .dataset import Example, ExampleSet
 from .halting import calibrate, halting_budget_for_library
 from .machine import RenMachine
 from .proof import Proof, proof_to_rule, search
-from .rules import (CompositeRule, EnsembleRule, NeuralRule, PythonRule, Recipe,
-                    Rule, RuleLibrary, TableRule)
+from .rules import (CompositeRule, EnsembleRule, JoinRule, NeuralRule,
+                    PythonRule, Recipe, Rule, RuleLibrary, TableRule)
 from .tapes import ABSTRACT, SPECIFIC, AbstractTape, Content, SpecificTape
 from .tools import build_tools
 from .verify import equivalent, verify_against_rules, verify_rule
@@ -42,7 +42,7 @@ __version__ = "0.1.0"
 __all__ = [
     "RenMachine",
     "Content", "AbstractTape", "SpecificTape", "ABSTRACT", "SPECIFIC",
-    "Rule", "PythonRule", "TableRule", "NeuralRule", "CompositeRule",
+    "Rule", "PythonRule", "JoinRule", "TableRule", "NeuralRule", "CompositeRule",
     "EnsembleRule", "RuleLibrary", "Recipe",
     "Example", "ExampleSet",
     "search", "Proof", "proof_to_rule",

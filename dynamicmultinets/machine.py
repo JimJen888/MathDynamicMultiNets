@@ -289,6 +289,18 @@ class RenMachine:
         self.note("verify", report.summary().splitlines()[0])
         return report
 
+    def derive(self, givens: Sequence[str], target: str, max_rounds: int = 8,
+               trusted_only: bool = True, max_known: int = 600):
+        """Saturate from several givens instead of walking one path.
+
+        Use this where a proof COLLECTS things rather than transforms one
+        thing: the conclusion follows from several facts established
+        separately, which `prove` has no shape for. See `proof.saturate`.
+        """
+        return proof_mod.saturate(self.library, givens, target,
+                                  max_rounds=max_rounds, max_known=max_known,
+                                  trusted_only=trusted_only)
+
     def assume(self, cell: str, because: str, source: str = "asserted",
                standing: str = "construction-specific"):
         """Grant a hypothesis the machine cannot establish, on the record.

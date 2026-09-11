@@ -125,6 +125,126 @@ class Proof:
         return head + "\n" + body + tail
 
 
+# ---------------------------------------------------------------------------
+# Saturation: the search a conjunction needs
+# ---------------------------------------------------------------------------
+def saturate(
+    library,
+    givens: Sequence[str],
+    target: str,
+    max_rounds: int = 8,
+    max_known: int = 600,
+    trusted_only: bool = True,
+) -> Proof:
+    """Derive a SET of cells until the target appears, rather than a path.
+
+    `search` walks one cell to the next, which is the right shape for a
+    calculation and the wrong one for a proof. A proof establishes several
+    things and then collects them, and there is nowhere in a path to put
+    the collecting step. So this keeps everything derived so far, applies
+    every rule that fires, and repeats.
+
+    The cost of that generality is real and is bounded here rather than
+    hidden: every unary rule is tried against every known cell each round,
+    so the work grows with the square of what has been derived. `max_known`
+    stops it, `max_rounds` stops it, and a run that hits either says so in
+    the note instead of reporting a clean failure.
+
+    What comes back is a `Proof` whose steps are the sub-graph that
+    actually reached the target, in an order where every premise precedes
+    its use. Accounting is the same as anywhere else: measured, unmeasured
+    and assumed are counted over the rules the sub-graph used, so a
+    conclusion collected from assumed premises still says so.
+    """
+    known: dict[str, Content] = {}
+    origin: dict[str, tuple[str, tuple[str, ...]]] = {}
+    for text in givens:
+        cell = Content.abstract(text.strip())
+        known[cell.text] = cell
+
+    rules = [library.get(n) for n in library.rules]
+    if trusted_only:
+        rules = [r for r in rules if r.trusted]
+    joins = [r for r in rules if hasattr(r, "fires")]
+    singles = [r for r in rules if not hasattr(r, "fires")]
+
+    target_text = normalize(target)
+    note = ""
+    rounds = 0
+    while rounds < max_rounds:
+        rounds += 1
+        grew = False
+        for rule in singles:
+            for text in list(known):
+                out = rule.apply(known[text])
+                if out is None or out.text in known:
+                    continue
+                known[out.text] = out
+                origin[out.text] = (rule.name, (text,))
+                grew = True
+                if len(known) >= max_known:
+                    note = (f"stopped at {max_known} derived cells; the target "
+                            f"may be reachable with a larger budget")
+                    break
+            if note:
+                break
+        for rule in joins:
+            if note:
+                break
+            out = rule.fires(known)
+            if out is None or out.text in known:
+                continue
+            known[out.text] = out
+            origin[out.text] = (rule.name, rule.premises)
+            grew = True
+        if any(normalize(t) == target_text for t in known):
+            break
+        if not grew or note:
+            if not grew and not note:
+                note = "no rule fired on anything derived; the set is closed"
+            break
+
+    reached = next((t for t in known if normalize(t) == target_text), None)
+    if reached is None:
+        return Proof(False, " + ".join(givens), target, nodes_expanded=len(known),
+                     note=note or f"not derived in {rounds} rounds")
+
+    # Walk back from the target, keeping only what it actually used.
+    needed: list[str] = []
+
+    def collect(text: str) -> None:
+        if text in needed or text not in origin:
+            return
+        for premise in origin[text][1]:
+            collect(premise)
+        needed.append(text)
+
+    collect(reached)
+
+    steps: list[ProofStep] = []
+    conf = measured = 1.0
+    unmeasured = assumed = 0
+    for text in needed:
+        rule_name, premises = origin[text]
+        rule = library.get(rule_name)
+        steps.append(ProofStep(rule_name, " + ".join(premises), text,
+                               rule.domain_in, rule.domain_out))
+        conf *= rule.confidence()
+        if rule.measured():
+            measured *= rule.confidence()
+        else:
+            unmeasured += 1
+        if getattr(rule, "assumes", ()):
+            assumed += 1
+
+    return Proof(True, " + ".join(givens), target, steps, known[reached],
+                 len(known), conf, sum(library.get(origin[t][0]).cost_bits()
+                                       for t in needed),
+                 measured_confidence=measured, unmeasured=unmeasured,
+                 assumed=assumed,
+                 note=f"derived in {rounds} rounds from {len(givens)} givens")
+
+
 def search(
     library: RuleLibrary,
     start: Content,

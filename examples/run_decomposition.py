@@ -16,36 +16,34 @@ SEARCHES for a rule or short chain in its library that justifies it, and
 reports which links it can validate and which it cannot. Nothing here is
 taken on my word, which is the point of the exercise.
 
-What came out, and it is not what I expected when I started. Every link
-that is one rule applied to one cell was validated, six of eight. The two
-that failed are structural rather than mathematical, and the second is the
-more serious:
+What came out, over two corrections to this file, both recorded because
+each one changed the answer.
 
-  NOT EXPRESSIBLE   the step's statement has no cell. Smoothness of the
-                    summed field is not something any sublanguage here can
-                    write down.
+Seven of eight links now validate. Every one is found by search rather
+than asserted: the machine is given a premise and a target and finds the
+rule. The single remaining failure is that smoothness of the summed field
+has no cell in any sublanguage here.
 
-  NO CONJUNCTION    the final step follows from five established facts
-                    TOGETHER, and a proof here is a chain: one rule, one
-                    cell, one successor. There is no way to say "these
-                    five, therefore that". `holder_product` works around it
-                    with a hand-rolled `pair` cell, which is a special case
-                    and not a mechanism. Nearly every real proof ends in a
-                    step of this shape, so one failure here understates it.
+The first version scored three of ten and blamed missing rules. It had
+the decomposition as a LIST, which silently gave one step the wrong
+premise. Proofs are graphs, and the correction both improved the count and
+revealed the real obstacle, which was invisible while the shape was wrong.
+
+That obstacle was CONJUNCTION. The final step follows from four facts
+established separately, and a proof here was a chain: one rule, one cell,
+one successor, with nowhere to put a collecting step. Nearly every real
+argument ends in one. So `JoinRule` and `machine.derive` were added -- a
+rule with several premises, and a search that derives a SET of cells
+instead of walking a path -- and the link went from unvalidatable to
+validated. That is the one place in this conversation where a named gap
+turned into working machinery.
 
 The other half of the answer is the inputs. Five things are assumed rather
 than derived, four of them setup and one of them the mathematics: an L^2
 band estimate for a correction, which is what Propositions 7.5 and 9.6
 deliver. The machine can state the conditions such an estimate would have
-to satisfy, and cannot produce one. That is the same boundary as
-everywhere else in this package, reached from a new direction.
-
-An earlier version of this file scored three of ten and blamed missing
-rules. It had the decomposition as a LIST, which silently gave one step
-the wrong premise. Proofs are graphs. The correction is recorded here
-because the first number was wrong in the interesting direction: it made
-the machine look worse than it is, and it made the real obstacle, the
-absence of conjunction, invisible.
+to satisfy and cannot produce one. That is the same boundary as everywhere
+else in this package, reached from a new direction.
 
 Run: python examples/run_decomposition.py
 """
@@ -58,7 +56,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from dynamicmultinets import RenMachine                            # noqa: E402
+from dynamicmultinets import JoinRule, RenMachine                   # noqa: E402
 from dynamicmultinets.navierstokes import install_navier_stokes_rules  # noqa: E402
 from dynamicmultinets.normcalc import (est, glob, install_norm_rules,  # noqa: E402
                                        required_estimate, vanishes)
@@ -148,7 +146,7 @@ STEPS = [
          why="convergence of the series in every C^k norm, from the same "
              "cutoff schedule"),
 
-    dict(key="8", from_=("1", "2", "5", "6", "7"),
+    dict(key="8", from_=("1", "2", "5", "6"),
          cell="local_field_theorem_3_1",
          claim="collecting all of the above gives the local field theorem",
          why="the conjunction of the steps established"),
@@ -168,15 +166,26 @@ def check(machine: RenMachine) -> list[dict]:
             row["status"] = "NOT EXPRESSIBLE"
             row["detail"] = "the statement has no cell in any sublanguage"
         elif isinstance(step["from_"], tuple):
-            # Several established facts, one conclusion. The machine's
-            # proof is a chain: it applies one rule to one cell and has no
-            # way to combine several. `holder_product` gets round that with
-            # a hand-rolled `pair` cell, which is a special case and not a
-            # mechanism.
-            row["status"] = "NO CONJUNCTION"
-            row["detail"] = (f"follows from {', '.join(step['from_'])} "
-                             f"together, and a chain applies one rule to "
-                             f"one cell")
+            # Several established facts, one conclusion. A chain has
+            # nowhere to put this, which is what `JoinRule` and
+            # `machine.derive` were added for: saturate from the premises
+            # and see whether the collecting step fires.
+            premises = [by_key[k]["cell"] for k in step["from_"]]
+            if any(p is None for p in premises):
+                row["status"] = "PREMISE NOT EXPRESSIBLE"
+                row["detail"] = ("one of the facts it collects has no cell, "
+                                 "so the conjunction cannot be stated either")
+            else:
+                derived = machine.derive(premises, step["cell"], max_rounds=4,
+                                         trusted_only=False)
+                if derived.found:
+                    row["status"] = "VALIDATED"
+                    row["detail"] = (f"{derived.steps[-1].rule} collecting "
+                                     f"{', '.join(step['from_'])}")
+                else:
+                    row["status"] = "NO CONJUNCTION"
+                    row["detail"] = ("no join rule collects these; "
+                                     + (derived.note or ""))
         else:
             premise = by_key[step["from_"]]["cell"]
             proof = machine.prove(premise, step["cell"], max_depth=3,
@@ -190,6 +199,25 @@ def check(machine: RenMachine) -> list[dict]:
                                  f"{step['from_']} to this cell")
         results.append(row)
     return results
+
+
+def assemble_rule() -> JoinRule:
+    """The collecting step of Proposition 9.9, as a rule with five premises.
+
+    This is what the first run of this experiment could not express. It is
+    written here rather than shipped in a module because it belongs to this
+    proposition: a conjunction names the things it collects, and these are
+    those things.
+    """
+    return JoinRule(
+        "assemble_local_field_theorem",
+        premises=[s["cell"] for s in STEPS
+                  if s["key"] in ("1", "2", "5", "6")],
+        conclusion="local_field_theorem_3_1",
+        description="Proposition 9.9: the cycle closes at every stage, the "
+                    "tail is flat, the residual vanishes and the increment "
+                    "splits, so the local field theorem holds",
+        exact=True, trusted=True)
 
 
 def main() -> None:
@@ -212,6 +240,8 @@ def main() -> None:
                          ("limit_at_the_singularity",
                           "summation_and_limit_by_sign")):
         machine.prove_rule(rule, prover)
+
+    machine.library.add(assemble_rule())
 
     print("=" * 78)
     print("Proposition 9.9, decomposed into short steps and checked link by link")
