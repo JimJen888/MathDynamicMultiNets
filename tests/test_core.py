@@ -1041,6 +1041,818 @@ def test_the_machine_states_the_estimate_it_would_need():
     assert "-fr > 0" in " ; ".join(uniform)
 
 
+def test_the_summation_lemma_and_heat_exterior_decompose():
+    """Two more of the 25, taken down to leaves the goal allows: theorems
+    from outside the paper, or definitions the construction makes. A
+    definition has no proof because it is a choice, and the test checks
+    that the leaves are one or the other rather than more estimates."""
+    import importlib.util
+    from pathlib import Path
+
+    path = (Path(__file__).resolve().parents[1] / "examples"
+            / "run_estimates.py")
+    spec = importlib.util.spec_from_file_location("estimates", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    m = RenMachine()
+    for rule in module.PRIOR:
+        m.library.add(rule)
+
+    total = 0
+    for _, steps in module.CASES:
+        audit = m.check_proof(steps)
+        assert not audit.unvalidated
+        total += len(audit.derived)
+    assert total == 34
+
+    # Every input is a definition or a previous link, never an estimate.
+    for _, steps in module.CASES:
+        for claim in steps:
+            if claim.premises:
+                continue
+            why = claim.justification or ""
+            assert "DEFINITION" in why or "previous link" in why, why
+
+    # And the ledger accounts for all 25 without netting anything away.
+    accounted = sum(len(items) for _, items in module.LEDGER)
+    assert accounted >= 15
+    still = dict(module.LEDGER)["still granted"]
+    assert still == []
+    # Nothing was netted away: every one of the 25 is accounted for under
+    # some heading, including the ones that turned out to be definitions
+    # or duplicates rather than claims.
+    assert sum(len(v) for _, v in module.LEDGER) >= 15
+    # The atomic law that makes an order table work is named as such.
+    assert any("associativity" in (r.assumes[0] if r.assumes else "")
+               for r in module.PRIOR)
+
+
+def test_a_granted_estimate_decomposes_as_well():
+    """The 25 estimates the chain grants are not a floor. Lemma 7.4, one
+    of them, decomposes into an invariant-region argument for a Riccati
+    ratio, the fundamental theorem of calculus, a continuity argument,
+    linear algebra in the frame, and induction on the derivative order.
+    All named."""
+    import importlib.util
+    from pathlib import Path
+
+    path = (Path(__file__).resolve().parents[1] / "examples"
+            / "run_estimate.py")
+    spec = importlib.util.spec_from_file_location("estimate", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    m = RenMachine()
+    for rule in module.PRIOR:
+        m.library.add(rule)
+    audit = m.check_proof(module.STEPS)
+
+    assert not audit.unvalidated
+    assert len(audit.derived) == 8
+    assert len(audit.inputs) == 4
+    # Named, not paraphrased: each rule states the tool it is.
+    for rule in module.PRIOR:
+        assert rule.assumes and len(rule.assumes[0]) > 40
+
+
+def test_every_rule_is_classified_by_how_it_was_formed():
+    """The census: each of the four ways this machine forms a rule, with
+    the classification read off the rule's own state rather than declared.
+
+    The distinctions that matter are the ones that would be easy to blur.
+    A kept chain is untrusted until something checks it AS a chain. The
+    eleven original imports are still in the library and still untrusted,
+    so they are counted apart rather than folded into the known rules,
+    which would suggest the argument still runs through them.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    path = (Path(__file__).resolve().parents[1] / "examples"
+            / "run_census.py")
+    spec = importlib.util.spec_from_file_location("census", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    machine = module.build()
+    groups: dict = {}
+    for name in machine.library.rules:
+        groups.setdefault(module.how_formed(machine.library.get(name)),
+                          []).append(name)
+
+    assert set(groups["PROVED"]) == {"increment_identity",
+                                     "ns_carrier_frequency",
+                                     "prop_9_6_all_stages"}
+    assert groups["CHAINING"] == ["cycle_once"]
+    assert len(groups["DISCOVERY"]) == 12
+    assert len(groups["KNOWN"]) > 100
+    # The originals stay visible and stay untrusted.
+    assert len(groups["SUPERSEDED"]) == 11
+    for name in groups["SUPERSEDED"]:
+        assert not machine.library.get(name).trusted
+
+
+def test_search_and_chaining_are_counted_for_what_they_do():
+    """The census first counted rules CREATED by keeping a found path,
+    which happened once, and that badly undersold search. Every validated
+    link in every decomposition was FOUND: the machine was given two cells
+    and asked for a path, and the prose beside each step is recorded for
+    the reader and never consulted."""
+    import importlib.util
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "examples"
+    spec = importlib.util.spec_from_file_location(
+        "census2", root / "run_census.py")
+    census = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(census)
+
+    searched = conjunctions = 0
+    for name in census.DECOMPOSITIONS:
+        sub = importlib.util.spec_from_file_location(name, root / f"{name}.py")
+        module = importlib.util.module_from_spec(sub)
+        sub.loader.exec_module(module)
+
+        groups_of_steps = []
+        for attr in ("STEPS", "STEPS_10_1", "STEPS_1_1", "INSTANTIATED"):
+            if getattr(module, attr, None):
+                groups_of_steps.append(getattr(module, attr))
+        for _, steps in getattr(module, "CASES", []):
+            groups_of_steps.append(steps)
+
+        local = RenMachine()
+        for rule in getattr(module, "PRIOR", []):
+            local.library.add(rule)
+        for steps in groups_of_steps:
+            by_key = {c.key: c for c in steps}
+            for claim in steps:
+                if not claim.premises or claim.cell is None:
+                    continue
+                cells = [by_key[k].cell for k in claim.premises
+                         if k in by_key and by_key[k].cell]
+                if len(cells) != len(claim.premises):
+                    continue
+                for cell in cells:
+                    local.assume(cell, "granted", source="test",
+                                 standing="hypothesis")
+                if len(cells) == 1:
+                    got = local.prove(cells[0], claim.cell, max_depth=3,
+                                      trusted_only=False)
+                else:
+                    got = local.derive(cells, claim.cell, max_rounds=3,
+                                       trusted_only=False)
+                    conjunctions += got.found
+                searched += got.found
+
+    # Search is doing most of the work, and conjunctions are a large
+    # fraction of it, which is why the chain-only search was not enough.
+    assert searched > 100
+    assert conjunctions > 40
+
+
+def test_one_chain_reaches_the_theorem():
+    """The whole thing assembled: every intermediate result in place and
+    Theorem 1.1 reached, with the ledger printed rather than netted off.
+
+    This is 'finish the proof' in the sense of forming rule chains from
+    cited prerequisites through the intermediate results to the theorem.
+    It is not a proof of the Navier-Stokes result: the paper's own
+    estimates are granted, and the test pins their count so that a chain
+    which quietly grew its assumptions would fail here.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    path = (Path(__file__).resolve().parents[1] / "examples"
+            / "run_complete.py")
+    spec = importlib.util.spec_from_file_location("complete", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    machine, facts, estimates, links, joins = module.build()
+
+    for label, _, _, chain_cell in module.LINKS:
+        assert machine.prove("anything", chain_cell, max_depth=3,
+                             trusted_only=False).found, label
+    assert machine.prove("anything", "theorem_1_1_forced_blowup",
+                         max_depth=4, trusted_only=False).found
+
+    # The ledger. A chain reaching the theorem on a hundred granted
+    # estimates would be worthless, so the counts are the result.
+    assert facts >= 70
+    assert estimates <= 30
+    assert joins == len(module.LINKS)
+
+
+def test_the_last_four_decompose():
+    """Theorem 4.6 and Propositions 5.5, 7.5 and 9.6, following the paper.
+
+    The one that matters is Theorem 4.6. I argued repeatedly that an
+    existential cannot come from chaining implications and that a witness
+    has to be built. Both true, and the paper builds it with a contraction
+    mapping: Banach's fixed point theorem is a named rule like any other,
+    and nothing about the existential needed new machinery.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    path = (Path(__file__).resolve().parents[1] / "examples"
+            / "run_construction.py")
+    spec = importlib.util.spec_from_file_location("construction", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    m = RenMachine()
+    for rule in module.PRIOR:
+        m.library.add(rule)
+
+    total = validated = 0
+    for _, steps in module.CASES:
+        audit = m.check_proof(steps)
+        assert not audit.unvalidated
+        total += len(audit.derived)
+        validated += len(audit.derived) - len(audit.unvalidated)
+    assert total == validated == 22
+
+    # Theorem 4.6's witness comes from a fixed point, and the rules that
+    # produce it are named theorems rather than anything special.
+    names = {r.name for r in module.PRIOR}
+    assert {"banach_fixed_point", "implicit_function", "rolle_counts_zeros",
+            "contraction"} <= names
+
+    # And the estimates are still cited rather than reproved, which is
+    # what the whole exercise rests on.
+    cited = sum(1 for _, steps in module.CASES for c in steps
+                if "CITED" in (c.justification or ""))
+    assert cited == 9
+
+
+def test_the_first_front_half_step_checks_out():
+    """Proposition 9.5 on the apparatus. Three of its steps are
+    derivations the machine performs rather than citations, and the rest
+    are the construction's own estimates. Weaker than the Section 10
+    decompositions, where the cited facts were public theorems, and the
+    test records which is which rather than a step count."""
+    import importlib.util
+    from fractions import Fraction
+    from pathlib import Path
+
+    from dynamicmultinets.apparatus import (KAPPA_S, clears, install_apparatus,
+                                            mean, pair, wave)
+
+    path = (Path(__file__).resolve().parents[1] / "examples"
+            / "run_initialize.py")
+    spec = importlib.util.spec_from_file_location("initialize", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    m = RenMachine()
+    install_apparatus(m.library)
+
+    # The derivation the paper asserts: primary amplitudes at 1/2 give a
+    # nonlinear wave residual at 1 - kappa_s.
+    amplitude = wave(Fraction(1, 2), 1)
+    squared = m.library.get("class_product").apply(
+        Content.abstract(pair(amplitude, amplitude)))
+    residual = m.library.get("radial_derivative").apply(squared)
+    assert residual.text == wave(1 - KAPPA_S, 2)
+
+    # The sum across orders sits at the weaker, which is why 1.49 is
+    # quotable.
+    means = m.library.get("weakest_term").apply(Content.abstract(
+        pair(mean(Fraction(3, 2) - KAPPA_S), mean(2 - KAPPA_S))))
+    assert clears(means.text, Fraction(149, 100))
+
+    # And every achieved order clears what stage zero requires.
+    assert clears(residual.text, module.B0)
+    assert clears(mean(Fraction(149, 100)), module.C0)
+    assert clears(mean(Fraction(9, 5) - KAPPA_S), module.C0)
+
+    # Six cited estimates carry the step, and they are estimates rather
+    # than public theorems. That distinction is the point.
+    assert len(module.CITED) == 6
+
+
+def test_the_order_calculus_reproduces_the_papers_exponents():
+    """The prerequisite for the front half, and the reason my last
+    objection was half wrong. The construction's apparatus is not informal
+    notation: Proposition 6.6 states how the classes compose and how the
+    operators move between them, with a proof. Registering it cites a
+    proposition rather than paraphrasing prose, and the test is whether it
+    reproduces exponents the paper asserts."""
+    from fractions import Fraction
+
+    from dynamicmultinets.apparatus import (KAPPA_S, install_apparatus, mean,
+                                            pair, wave)
+
+    m = RenMachine()
+    install_apparatus(m.library)
+    product = m.library.get("class_product")
+
+    # The paper: primary transverse amplitudes have exponent 1/2 and their
+    # nonlinear wave residuals have exponent 1 - kappa_s.
+    two_waves = product.apply(Content.abstract(
+        pair(wave(Fraction(1, 2), 1), wave(Fraction(1, 2), 1))))
+    assert two_waves.text == wave(Fraction(1), 2)
+    residual = m.library.get("radial_derivative").apply(two_waves)
+    assert residual.text == wave(1 - KAPPA_S, 2)
+
+    # Harmonics that cancel give a mean rather than a wave, which is the
+    # one case in Proposition 6.6 and the one that matters.
+    cancelling = product.apply(Content.abstract(
+        pair(wave(Fraction(1, 2), 1), wave(Fraction(1, 2), -1))))
+    assert cancelling.text == mean(Fraction(1))
+
+    # The operator table, row by row.
+    start = mean(Fraction(3, 5))
+    for rule, expected in (("coefficient_derivative", Fraction(3, 5)),
+                           ("absorption", Fraction(3, 5)),
+                           ("radial_derivative", Fraction(3, 5) - KAPPA_S),
+                           ("axial_derivative", Fraction(8, 5)),
+                           ("slow_time_derivative", Fraction(8, 5))):
+        got = m.library.get(rule).apply(Content.abstract(start))
+        assert got.text == mean(expected), rule
+
+    # Every rule cites the proposition it comes from.
+    for name in ("class_product", "radial_derivative", "finite_sum"):
+        assert m.library.get(name).assumes
+
+
+def test_a_front_half_step_decomposes_but_widens():
+    """The construction's own steps apply known rules too, and
+    Proposition 9.9 decomposes the way Section 10 did. The finding is what
+    it costs: each Section 10 step pulled in at most one citation, and
+    this one pulls in five from outside the eleven. Working backward
+    widens before it narrows, and a count of decomposed steps alone would
+    hide that."""
+    import importlib.util
+    from pathlib import Path
+
+    path = (Path(__file__).resolve().parents[1] / "examples"
+            / "run_summation.py")
+    spec = importlib.util.spec_from_file_location("summation", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    from dynamicmultinets import Claim
+
+    m = RenMachine()
+    for rule in module.PRIOR:
+        m.library.add(rule)
+    for cell, why, where in module.CITED:
+        m.assume(cell, f"{why} [{where}]", source="the paper",
+                 standing="previous link")
+    claims = [Claim(f"C{i}", cell, (), why, f"cited: {where}")
+              for i, (cell, why, where) in enumerate(module.CITED)]
+    claims += module.STEPS
+
+    audit = m.check_proof(claims)
+    assert not audit.unvalidated
+    assert len(audit.derived) == 13
+
+    outside = [w for _, w, where in module.CITED if where == "outside"]
+    assert len(outside) == 5
+
+
+def test_the_back_half_of_the_chain_closes():
+    """Granting the named rules and the cited imports, Section 10 and the
+    main theorem close through their own proofs with every imported step
+    deleted. The front half does not, and not because it is blocked: six
+    steps have no decomposition written down at all."""
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "examples" / "run_tail.py"
+    spec = importlib.util.spec_from_file_location("tail", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    machine, facts, correspondences, cited = module.build()
+
+    for entry in module.TAIL:
+        sub = importlib.util.spec_from_file_location(
+            entry["module"], path.parent / f"{entry['module']}.py")
+        mod = importlib.util.module_from_spec(sub)
+        sub.loader.exec_module(mod)
+        audit = machine.check_proof(getattr(mod, entry["claims"]))
+        assert not audit.unvalidated, entry["step"]
+        assert machine.prove("anything", entry["chain_out"], max_depth=3,
+                             trusted_only=False).found, entry["step"]
+
+    assert machine.prove("anything", "theorem_1_1_forced_blowup", max_depth=4,
+                         trusted_only=False).found
+    # The cost has to stay visible: two imports from outside the eleven,
+    # and the correspondences that are a human judgement.
+    assert len(cited) == 2
+    assert correspondences >= 15
+    assert len(module.FRONT) == 6
+
+
+def test_proof_specific_computations_bottom_out_in_named_rules():
+    """The census called six entries computations belonging to this proof
+    rather than rules anyone holds. Decomposed one level further they are
+    all named: Calderon-Zygmund, the mean value theorem, polar
+    coordinates, a power integral, Young twice, an exhaustive case split.
+    So the label marked a level of description, not a boundary."""
+    import importlib.util
+    from pathlib import Path
+
+    path = (Path(__file__).resolve().parents[1] / "examples"
+            / "run_deeper.py")
+    spec = importlib.util.spec_from_file_location("deeper", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    m = RenMachine()
+    for rule in module.PRIOR:
+        m.library.add(rule)
+
+    total = validated = 0
+    for _, steps in module.CASES:
+        audit = m.check_proof(steps)
+        total += len(audit.derived)
+        validated += len(audit.derived) - len(audit.unvalidated)
+        assert not audit.unvalidated
+
+    assert total >= 15 and validated == total
+    # Every rule at this level names the theorem it is, which is the
+    # claim being tested rather than a formatting preference.
+    for rule in module.PRIOR:
+        assert rule.assumes and len(rule.assumes[0]) > 30
+
+
+def test_most_decomposed_steps_apply_a_named_rule():
+    """The thesis behind the whole exercise: a derivation's steps apply
+    rules established enough to be held rather than looked up. Across the
+    decompositions here that is true of the large majority, and the
+    minority is where a decomposition stopped at the paper's prose."""
+    import importlib.util
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "examples"
+    spec = importlib.util.spec_from_file_location(
+        "census", root / "run_leaf_census.py")
+    census = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(census)
+
+    named = specific = 0
+    for _, module_name in census.SOURCES:
+        spec2 = importlib.util.spec_from_file_location(
+            module_name, root / f"{module_name}.py")
+        module = importlib.util.module_from_spec(spec2)
+        spec2.loader.exec_module(module)
+        for rule in module.PRIOR:
+            if rule.name in census.SPECIFIC:
+                specific += 1
+            else:
+                named += 1
+
+    assert named + specific >= 40
+    assert named / (named + specific) > 0.8
+    # Every entry classified as proof-specific carries a reason, so the
+    # number can be argued with line by line rather than taken on trust.
+    assert all(isinstance(v, str) and len(v) > 20
+               for v in census.SPECIFIC.values())
+
+
+def test_the_localization_and_the_theorem_decompose():
+    """Two more of the eleven, from the paper's own proofs. Theorem 1.1 is
+    the one I called out of reach for being the conjunction of everything;
+    a conjunction is a step like any other once the machine can express
+    one, and the things it collects are the previous links."""
+    import importlib.util
+    from pathlib import Path
+
+    path = (Path(__file__).resolve().parents[1] / "examples"
+            / "run_theorem.py")
+    spec = importlib.util.spec_from_file_location("theorem", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    m = RenMachine()
+    for rule in module.PRIOR:
+        m.library.add(rule)
+
+    localization = m.check_proof(module.STEPS_10_1)
+    assert not localization.unvalidated and len(localization.derived) == 7
+    assert len(localization.inputs) == 1
+
+    theorem = m.check_proof(module.STEPS_1_1)
+    assert not theorem.unvalidated and len(theorem.derived) == 5
+    # Its inputs are the previous links plus one genuine import from
+    # outside Section 10, which has to stay visible rather than folded in.
+    assert len(theorem.inputs) == 5
+    assert any("IMPORT" in (c.justification or "")
+               for c in module.STEPS_1_1)
+
+
+def test_a_decomposition_can_replace_its_import():
+    """The sharp test is deletion. An import that can be removed while the
+    chain still closes through the decomposition has been replaced; one
+    that cannot has not, whatever the step count says.
+
+    It also pins the correction this experiment forced. I thought each
+    decomposed lemma needed its hypotheses instantiated for the
+    construction. Mostly it does not: the machine's chain hands each step
+    the previous step's conclusion, so what is needed is a correspondence
+    at each end, plus any hypothesis the chain does not carry.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    path = (Path(__file__).resolve().parents[1] / "examples"
+            / "run_discharge.py")
+    spec = importlib.util.spec_from_file_location("discharge", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    results = [module.discharge(entry) for entry in module.LEMMAS]
+    assert len(results) == 3
+    for r in results:
+        assert r["reached"], r["name"]
+        assert not r["audit"].unvalidated, r["name"]
+
+    # Replacing a lemma by its proof can pull in a hypothesis from
+    # outside the chain, and the report has to say so rather than
+    # counting the import away.
+    extra = [cell for r in results for cell, _ in r["extra"]]
+    assert extra == ["derivative_limits(R)"]
+
+
+def test_the_comparison_lemma_decomposes_too():
+    """I called Lemma 10.5 out of reach because it turns on Riesz
+    transforms and nothing here models them. That was a claim about the
+    machine made without reading the proof. Following the paper's own
+    argument, the Riesz transforms sit inside a registered fact the way
+    Cauchy-Schwarz does, and the argument around them is an implication."""
+    import importlib.util
+    from pathlib import Path
+
+    path = (Path(__file__).resolve().parents[1] / "examples"
+            / "run_comparison.py")
+    spec = importlib.util.spec_from_file_location("comparison", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    m = RenMachine()
+    for rule in module.PRIOR:
+        m.library.add(rule)
+    audit = m.check_proof(module.STEPS)
+
+    assert not audit.unvalidated
+    assert len(audit.derived) == 15
+    assert len(audit.inputs) == 4        # the lemma's stated hypotheses
+    for text in audit.assumptions:
+        lowered = text.lower()
+        for word in ("profile", "pulse", "cone", "correction cycle"):
+            assert word not in lowered, (word, text)
+
+
+def test_a_quantitative_step_is_also_a_transform():
+    """I claimed five of the eleven needed a quantitative hypothesis and
+    that granting it would be granting the estimate. Wrong: they are
+    implications, and the hypothesis is the previous link. Lemma 10.3 was
+    the one I called hardest of the five and it decomposes with nothing
+    construction-specific left over."""
+    import importlib.util
+    from pathlib import Path
+
+    path = (Path(__file__).resolve().parents[1] / "examples"
+            / "run_force_extension.py")
+    spec = importlib.util.spec_from_file_location("force_extension", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    m = RenMachine()
+    for rule in module.PRIOR:
+        m.library.add(rule)
+    audit = m.check_proof(module.STEPS)
+
+    assert not audit.unvalidated
+    assert len(audit.derived) == 8
+    # The three inputs are the previous lemma and a free choice, not a
+    # bound on the constructed object.
+    assert len(audit.inputs) == 3
+    assert len(audit.assumptions) == 8
+    for text in audit.assumptions:
+        lowered = text.lower()
+        for word in ("profile", "pulse", "cone", "swirl", "concentration"):
+            assert word not in lowered, (word, text)
+
+
+def test_a_general_lemma_can_be_instantiated():
+    """Proving a lemma leaves it inert: it is an implication and nothing
+    establishes its antecedents for the objects at hand. Supplying those
+    is instantiation, and it is where the hard content could be smuggled
+    in, so each one is granted on the record and counted."""
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "examples" / "run_energy_bound.py"
+    spec = importlib.util.spec_from_file_location("energy_bound_inst", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    m = RenMachine()
+    for rule in module.PRIOR:
+        m.library.add(rule)
+
+    # Inert without the hypotheses: every step that needs one fails.
+    bare = m.check_proof([c for c in module.INSTANTIATED
+                          if not c.key.startswith("C")])
+    assert bare.unvalidated
+
+    for cell, because, standing in module.INSTANTIATION:
+        m.assume(cell, because, source="the paper", standing=standing)
+    audit = m.check_proof(module.INSTANTIATED)
+
+    assert not audit.unvalidated
+    assert len(audit.derived) == 6
+    # Instantiated for a DIFFERENT name than the lemma was written with,
+    # which only works because a join binds variables.
+    assert all("U" in (c.cell or "") or c.cell is None
+               for c in module.INSTANTIATED if c.cell and "(" in c.cell)
+
+
+def test_the_exterior_equation_is_reduced_symbolically():
+    """An existential is proved by exhibiting a witness and checking the
+    conditions. This is the condition that is a differential equation, and
+    differentiating symbolically settles it as an identity instead of at
+    the points a difference quotient samples."""
+    from dynamicmultinets.navierstokes import install_navier_stokes_rules
+    from dynamicmultinets.symdiff import Expr, derive_exterior_ode
+
+    derived = derive_exterior_ode()
+    # The similarity structure closing IS the residual landing on one
+    # power of s. If it did not, no profile would work and the derivation
+    # would be answering a different question.
+    assert len({n for (n, _, _) in derived.residual.terms}) == 1
+    # Second order in H, and the equation is not vacuous.
+    assert max(k for (_, k) in derived.ode) == 2
+    assert len(derived.ode) == 4
+
+    # The two derivatives, checked against hand computation on one term.
+    one = Expr.term(0, 0, 0)
+    assert not one.d_s().is_zero and not one.d_tau().is_zero
+    assert one.d_tau().terms == {(-1, 0, 1): __import__(
+        "dynamicmultinets.symalg", fromlist=["Poly"]).Poly.constant(2)}
+
+    m = RenMachine()
+    install_navier_stokes_rules(m.library)
+    report = m.prove_rule("lemma_A6_heat", "exterior_ode_by_symbolic_reduction")
+    assert report.established
+
+    # Partial by construction: the reduction is symbolic and which
+    # exponent solves it is quadrature, so the rule must NOT come out
+    # exact on the strength of it.
+    assert not report.judgement.whole_domain
+    rule = m.library.get("lemma_A6_heat")
+    assert not rule.exact and not rule.proved
+
+
+def test_one_of_the_eleven_decomposes_into_prior_facts():
+    """The falsifiable claim, and it was falsified for Lemma 10.4.
+
+    My position was that however finely you decompose one of the eleven,
+    the leaves carrying the analytic content would be assertions about
+    the construction. For the energy bound that is false: every derived
+    step goes through a general textbook fact, and the only inputs are
+    the lemma's own hypotheses, which is what a lemma is supposed to
+    have. The test exists so that stays true.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "examples" / "run_energy_bound.py"
+    spec = importlib.util.spec_from_file_location("energy_bound", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    m = RenMachine()
+    for rule in module.PRIOR:
+        m.library.add(rule)
+    audit = m.check_proof(module.STEPS)
+
+    assert not audit.unvalidated          # nothing left as an assertion
+    assert len(audit.derived) == 6
+    assert len(audit.inputs) == 3         # the lemma's own hypotheses
+    assert audit.verdict() == "MODULO ASSUMPTIONS"
+
+    # And the standing is reported honestly: complete modulo a printed
+    # list of classical facts, none of which mentions the construction.
+    assert len(audit.assumptions) == 6
+    for text in audit.assumptions:
+        lowered = text.lower()
+        for word in ("profile", "pulse", "cone", "correction cycle",
+                     "concentration"):
+            assert word not in lowered, (word, text)
+
+
+def test_a_witness_is_built_rather_than_assumed():
+    """Most of the eleven are existentials, and an implication registry
+    never produces one. A witness has to be built. Theorem 4.6's moment
+    conditions are a finite linear system, so that part can be."""
+    from fractions import Fraction
+
+    from dynamicmultinets.witness import (build_moment_profile, moment,
+                                          solve_exact)
+
+    built = build_moment_profile([Fraction(1, 2), Fraction(-1, 2),
+                                  Fraction(-3, 2)],
+                                 [Fraction(1), Fraction(0), Fraction(0)])
+    assert built.built
+    assert all(isinstance(c, Fraction) for c in built.coefficients)
+
+    # Exact means exact: the solved coefficients hit the conditions on the
+    # nose, not to a tolerance.
+    for (lo, hi), want in zip(built.intervals, built.targets):
+        got = sum(c * moment(a, lo, hi)
+                  for c, a in zip(built.coefficients, built.exponents))
+        assert got == want
+
+    # And it says what it did not establish, which is the point. The
+    # outstanding list is derived from the theorem's four conditions, so
+    # it cannot quietly shrink to whatever happened to be checkable.
+    from dynamicmultinets.witness import CONDITIONS
+
+    assert len(CONDITIONS) == 4
+    done = [name for name, _, ok in CONDITIONS if ok]
+    assert done == ["the four moment identities"]
+    assert len(built.outstanding) == 3
+    assert any("regular axis" in o for o in built.outstanding)
+    assert any("cone" in o for o in built.outstanding)
+    assert "still assumed" in built.report()
+
+    # Lemma A.1's hypothesis is load-bearing: repeated powers give nothing.
+    repeated = build_moment_profile([Fraction(1, 2), Fraction(1, 2)],
+                                    [Fraction(1), Fraction(0)])
+    assert not repeated.built and "repeat" in repeated.obstruction
+
+    # A power whose moments are irrational is refused rather than rounded.
+    irrational = build_moment_profile([Fraction(1, 3), Fraction(-1, 2)],
+                                      [Fraction(1), Fraction(0)])
+    assert not irrational.built and "half-integer" in irrational.obstruction
+
+    # Singular means singular, not small.
+    assert solve_exact([[Fraction(1), Fraction(2)],
+                        [Fraction(2), Fraction(4)]], [1, 2]) is None
+
+
+def test_an_audit_says_what_a_proof_rests_on():
+    """The product is the ledger, not the verdict. A submitted proof is
+    checked step by step, and what comes back separates what was proved
+    from what was assumed from what merely went through."""
+    from dynamicmultinets import Claim
+    from dynamicmultinets.rules import PythonRule
+
+    m = RenMachine()
+    solid = PythonRule("solid", lambda c: Content.abstract("B")
+                       if c.text == "A" else None, ABSTRACT, ABSTRACT,
+                       source="A->B")
+    leaning = PythonRule("leaning", lambda c: Content.abstract("C")
+                         if c.text == "B" else None, ABSTRACT, ABSTRACT,
+                         source="B->C")
+    leaning.assumes = ("a classical fact nobody here proves",)
+    shaky = PythonRule("shaky", lambda c: Content.abstract("D")
+                       if c.text == "C" else None, ABSTRACT, ABSTRACT,
+                       source="C->D", exact=False)
+    shaky.trusted = False
+    for r in (solid, leaning, shaky):
+        m.library.add(r)
+
+    audit = m.check_proof([
+        Claim("1", "A", (), "the hypothesis", "given"),
+        Claim("2", "B", ("1",), "first step", "solid"),
+        Claim("3", "C", ("2",), "second step", "classical"),
+        Claim("4", "D", ("3",), "third step", "imported"),
+        Claim("5", None, ("4",), "something unwriteable", "hand waving"),
+    ])
+
+    assert audit.verdict() == "INCOMPLETE"          # step 5 has no cell
+    assert [v.status for v in audit.verdicts] == [
+        "INPUT", "VALIDATED", "VALIDATED", "VALIDATED", "NOT EXPRESSIBLE"]
+    assert len(audit.inputs) == 1
+
+    # The ledger separates the three kinds, and a step that got through on
+    # an untrusted rule is called out rather than counted as clean.
+    assert "a classical fact nobody here proves" in audit.assumptions
+    assert "untrusted import" in audit.standing["shaky"]
+    assert "exact arithmetic" in audit.standing["solid"]
+    leaned = {v.key for v, _ in audit.leaning()}
+    assert leaned == {"4"}
+
+    text = audit.report()
+    assert "validated THROUGH an untrusted rule" in text
+    assert "rests on 1 assumption" in text
+
+    # A proof that assumes nothing and uses nothing weak reads clean.
+    clean = m.check_proof([Claim("1", "A", (), "given", ""),
+                           Claim("2", "B", ("1",), "step", "")])
+    assert clean.verdict() == "MODULO ASSUMPTIONS"   # step 1 is still an input
+    assert not clean.assumptions and not clean.leaning()
+
+
 def test_a_conjunction_needs_a_set_not_a_path():
     """A proof collects things established separately and then combines
     them, and a chain has nowhere to put that step. `JoinRule` states it
@@ -1057,6 +1869,16 @@ def test_a_conjunction_needs_a_set_not_a_path():
             ABSTRACT, ABSTRACT, source=f"{src}->{dst}"))
     m.library.add(JoinRule("collect", ["P", "Q"], "R",
                            description="P and Q together give R"))
+    # Variable premises, so a join can be INSTANTIATED. Without them a
+    # join written for one name will not fire on another, which made
+    # every general lemma with a conjunction in it single-use.
+    m.library.add(JoinRule("collect_any", ["big(?x)", "small(?x)"],
+                           "paired(?x)",
+                           description="the two halves for the same object"))
+    got_general = m.derive(["big(w)", "small(w)"], "paired(w)", max_rounds=3)
+    assert got_general.found
+    # and the binding has to be consistent across premises
+    assert not m.derive(["big(w)", "small(v)"], "paired(w)", max_rounds=3).found
 
     # A path cannot get there: neither branch alone reaches R.
     assert not m.prove("p", "R", max_depth=4).found

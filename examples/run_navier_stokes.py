@@ -77,6 +77,7 @@ from dynamicmultinets.nsderivation import (                         # noqa: E402
 #: Every step of the paper the machine carries as a rule and cannot check.
 ALL_IMPORTED = tuple(IMPORTED_NAMES) + DERIVATION_IMPORTED
 from dynamicmultinets.tapes import ABSTRACT, SPECIFIC, Content       # noqa: E402
+from dynamicmultinets.witness import build_moment_profile           # noqa: E402
 
 GOAL = (
     "Rebuild the forced Navier-Stokes blowup construction as rules. Form one "
@@ -668,6 +669,64 @@ def report_the_open_door(machine: RenMachine) -> None:
     print("  standing of the rules that shipped with the calculus.")
 
 
+def report_the_witness(machine: RenMachine) -> None:
+    """Theorem 4.6's existential, attacked by building one.
+
+    Most of the eleven say an object exists, and no chain of implications
+    produces an object. So the question is not whether the machine can
+    deduce the existential but whether it can CONSTRUCT the thing, and for
+    the finite part of Theorem 4.6's profile it can.
+    """
+    print("\n--- building a witness instead of assuming one ---")
+    print("  Theorem 4.6 asserts profiles with four properties. Those four")
+    print("  are not alike. The moment identities are a finite linear")
+    print("  system over the rationals, and a finite linear system is")
+    print("  something this machine solves exactly. The other three")
+    print("  quantify over a continuum.")
+    reduction = machine.prove_rule("lemma_A6_heat",
+                                   "exterior_ode_by_symbolic_reduction")
+    print()
+    print("  The heat exterior, checked as an identity rather than at")
+    print("  sampled points. Substituting the similarity field into the")
+    print("  exterior equation and differentiating symbolically reduces it")
+    print("  to ONE power of s times an equation in Z, H, H' and H'':")
+    print(f"    {reduction.judgement.statement.split(': ', 1)[-1]}")
+    print("  That collapse is the similarity structure closing, and it is")
+    print("  checked rather than assumed. The equation is derived with the")
+    print("  exponent left symbolic, so it is not specific to the paper's")
+    print("  choice, and then the paper's profile is measured against it:")
+    for line in reduction.judgement.detail[2:4]:
+        print(f"    {line}")
+    print("  The second half is quadrature, so this is a partial result and")
+    print("  the rule is deliberately not marked exact.")
+
+    built = build_moment_profile(
+        [Fraction(1, 2), Fraction(-1, 2), Fraction(-3, 2)],
+        [Fraction(1), Fraction(0), Fraction(0)])
+    print()
+    for line in built.report().splitlines():
+        print(f"  {line}")
+    print()
+    print("  Two failure modes, because a construction that always succeeds")
+    print("  is not checking anything:")
+    for powers, why in (([Fraction(1, 2), Fraction(1, 2)], "repeated powers, "
+                         "which is exactly what Lemma A.1 forbids"),
+                        ([Fraction(1, 3), Fraction(-1, 2)], "a power whose "
+                         "moments are irrational")):
+        attempt = build_moment_profile(powers, [Fraction(1), Fraction(0)])
+        print(f"    {'built' if attempt.built else 'refused':8} {why}")
+    print()
+    print("  Two of Theorem 4.6's four conditions are now attacked this")
+    print("  way rather than assumed: the moment identities exactly, and")
+    print("  the heat exterior as a symbolic reduction plus a measurement.")
+    print("  This still does not prove Theorem 4.6, and the report says")
+    print("  which conditions it leaves open. What it changes is the shape")
+    print("  of the gap. 'There exist profiles' was one assumption with")
+    print("  nothing behind it; it is now an explicit candidate whose")
+    print("  finite conditions hold exactly and whose infinite ones are")
+    print("  named. That is the most an existential can be reduced to here.")
+
+
 def report_the_two_gaps(machine: RenMachine) -> None:
     """The two things the verified rules still do not give, demonstrated."""
     print("\n--- the two gaps, demonstrated ---")
@@ -784,6 +843,7 @@ def main() -> None:
     report_norm_derivations(machine)
     report_what_was_worked_out(machine)
     report_the_open_door(machine)
+    report_the_witness(machine)
     report_sensitivity(machine)
     report_the_two_gaps(machine)
 

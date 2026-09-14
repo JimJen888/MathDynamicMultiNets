@@ -41,6 +41,7 @@ conciseness objective minimises. The stance taken here matters:
 from __future__ import annotations
 
 import json
+import re
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -346,10 +347,15 @@ class JoinRule(Rule):
     of the links it could not validate, the one that mattered was the final
     conjunction, and it blocks the last step of nearly every real argument.
 
-    `premises` are the exact cells that must ALL be established. That is
-    narrower than pattern matching and it is the right first scope: a
-    conjunction in a proof names what it is collecting, and exact premises
-    make the search a dictionary lookup instead of a combinatorial one.
+    Premises may carry `?name` placeholders, bound consistently across all
+    of them and substituted into the conclusion. The first version of this
+    class used exact cells, on the reasoning that a conjunction names what
+    it is collecting. That was wrong in a way an experiment found rather
+    than an argument: a join written for `u` would not fire on `U`, so
+    every join rule was single-use and the general lemma it belonged to
+    could not be INSTANTIATED for the construction's own field. The unary
+    rules were patterns all along and instantiated without trouble; only
+    the joins did not.
 
     `apply` returns None always, so best-first path search ignores these
     and keeps the behaviour it had. They are found by `proof.saturate`,
@@ -377,13 +383,62 @@ class JoinRule(Rule):
     def apply(self, content: Content) -> Content | None:
         return None                  # never fires on a single cell
 
+    @staticmethod
+    def _as_regex(pattern: str) -> str:
+        out, i = [], 0
+        while i < len(pattern):
+            ch = pattern[i]
+            if ch == "?":
+                j = i + 1
+                while j < len(pattern) and (pattern[j].isalnum()
+                                            or pattern[j] == "_"):
+                    j += 1
+                name = pattern[i + 1:j]
+                out.append(f"(?P<{name}>[^,()]+)")
+                i = j
+            else:
+                out.append(re.escape(ch))
+                i += 1
+        return "".join(out)
+
+    def _match(self, pattern: str, binding: dict,
+               known: dict[str, Content]) -> list[dict]:
+        """Every way this premise can be met, extending `binding`."""
+        filled = pattern
+        for name, value in binding.items():
+            filled = filled.replace(f"?{name}", value)
+        if "?" not in filled:
+            return [binding] if filled in known else []
+        rx = re.compile(self._as_regex(filled))
+        out = []
+        for text in known:
+            m = rx.fullmatch(text)
+            if m:
+                out.append({**binding, **m.groupdict()})
+        return out
+
     def fires(self, known: dict[str, Content]) -> Content | None:
-        """The conclusion, when every premise has been established."""
-        if any(p not in known for p in self.premises):
-            return None
+        """The conclusion, when every premise has been established.
+
+        Premises are matched in order, each narrowing the binding, so the
+        cost is the number of known cells times the number of premises
+        rather than anything combinatorial.
+        """
+        bindings: list[dict] = [{}]
+        for pattern in self.premises:
+            nxt: list[dict] = []
+            for binding in bindings:
+                nxt.extend(self._match(pattern, binding, known))
+            if not nxt:
+                return None
+            bindings = nxt[:16]          # a conjunction is not a search
+        conclusion = self.conclusion
+        for name, value in bindings[0].items():
+            conclusion = conclusion.replace(f"?{name}", value)
+        if "?" in conclusion:
+            return None                  # a variable the premises never bound
         return Content.abstract(
-            self.conclusion,
-            derivation=f"collecting {', '.join(self.premises)}")
+            conclusion, derivation=f"collecting {', '.join(self.premises)}")
 
     def confidence(self) -> float:
         # Same reasoning as PythonRule: collecting established facts under

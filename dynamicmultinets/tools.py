@@ -226,6 +226,34 @@ def build_tools(m: RenMachine) -> dict[str, Tool]:
     def prove_rule(rule: str, prover: str) -> str:
         return m.prove_rule(rule, prover).summary()
 
+    @tool("check_proof",
+          "Submit a proof and have every step checked against the library. "
+          "Give a list of steps, each with a 'key', the statement as a "
+          "'cell' the machine can read, and 'premises': the keys of the "
+          "steps it follows from. A step with no premises is an INPUT the "
+          "proof assumes. Your 'justification' is recorded and never "
+          "consulted -- the machine finds the rule itself or reports that "
+          "it cannot, so a justification that sounds right and matches no "
+          "rule comes back as an unvalidated step. What you get is a "
+          "ledger: what was validated, what was assumed, and how every "
+          "rule used earned its place.",
+          {"steps": {"type": "array", "items": {
+              "type": "object",
+              "properties": {"key": _STR, "cell": _STR,
+                             "premises": {"type": "array", "items": _STR},
+                             "claim": _STR, "justification": _STR},
+              "required": ["key", "cell"]}}},
+          ["steps"])
+    def check_proof(steps: list) -> str:
+        from .audit import Claim
+
+        claims = [Claim(key=s.get("key", str(i)), cell=s.get("cell") or None,
+                        premises=tuple(s.get("premises", ())),
+                        claim=s.get("claim", ""),
+                        justification=s.get("justification", ""))
+                  for i, s in enumerate(steps)]
+        return m.check_proof(claims).report()
+
     @tool("assume",
           "Grant a hypothesis the machine cannot establish, so a general "
           "theorem in the library can bite on a specific object. Use it for "

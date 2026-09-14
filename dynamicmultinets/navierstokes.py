@@ -103,6 +103,7 @@ from .dataset import Example
 from .linarith import Lin, obligations, short, solve
 from .provers import Judgement, prover
 from .symalg import Poly
+from .symdiff import derive_exterior_ode
 from .generators import generator
 from .oracles import oracle
 from .prior import PRIOR_RULES
@@ -716,6 +717,125 @@ def _swirl_field(r: float, tau: float, h: float, A: float) -> float:
     """
     s = r * r / 2.0
     return s ** (-A) * _heat_factor(2.0 * tau / s, h)
+
+
+def _profile_derivatives(Z: float, h: float, nodes: int = 20001):
+    """H, H' and H'' of (A.32), by differentiating under the integral.
+
+    Exact differentiation of the integrand rather than differencing the
+    integral: the derivative of (1 + Zv)^-h in Z is closed form, so the
+    same quadrature that gives H gives its derivatives at the same cost
+    and without a step size to choose. The substitution v = w^p is the
+    one `_heat_factor` already uses, for the same reason.
+    """
+    p = 1.0 / (1.0 + h)
+    upper = 80.0 ** (1.0 / p)
+    w = np.linspace(0.0, upper, nodes)
+    v = w ** p
+    base = np.exp(-v) * p
+    step = upper / (nodes - 1)
+    weights = np.ones(nodes)
+    weights[1:-1:2] = 4.0
+    weights[2:-1:2] = 2.0
+
+    def simpson(y: np.ndarray) -> float:
+        return float(np.sum(weights * y) * step / 3.0)
+
+    g = math.gamma(1.0 + h)
+    return (simpson(base * (1.0 + Z * v) ** (-h)) / g,
+            simpson(base * (-h) * v * (1.0 + Z * v) ** (-h - 1)) / g,
+            simpson(base * h * (h + 1) * v * v * (1.0 + Z * v) ** (-h - 2)) / g)
+
+
+def _ode_residual(derivation, Z: float, A: float, h: float) -> float:
+    """How far the candidate is from satisfying the DERIVED equation."""
+    values = dict(zip((0, 1, 2), _profile_derivatives(Z, h)))
+    total = 0.0
+    for (m, k), coefficient in derivation.ode.items():
+        c = sum(float(co) * (A ** sum(power for _, power in monomial))
+                for monomial, co in coefficient.terms.items())
+        total += c * (Z ** m) * values[k]
+    return total
+
+
+@prover("exterior_ode_by_symbolic_reduction",
+        "substitutes the similarity field into the exterior equation and "
+        "differentiates symbolically, deriving the ordinary differential "
+        "equation the profile must satisfy instead of quoting it")
+def _prove_exterior_ode(library, rule) -> Judgement:
+    """Lemma A.6's candidate, checked against its equation.
+
+    An existential is proved by exhibiting a witness and verifying the
+    conditions, and this is the condition that is a differential equation.
+    Until now it was checked by differencing the field at sampled points,
+    which establishes it at those points and nowhere else.
+
+    Two halves, and they have different standing, which is why this
+    prover reports `whole_domain=False` rather than marking the rule
+    exact.
+
+    The first half is symbolic and covers every exponent. Substituting
+    s^-A H(2 tau / s) into the exterior equation and differentiating
+    reduces it to a SINGLE power of s times an expression in Z, H, H' and
+    H''. That reduction happening at all is the similarity structure
+    closing, and it is checked rather than assumed. What is left is the
+    profile equation, derived here with A still a variable.
+
+    The second half is numerical and is not. Which A makes the paper's
+    particular H a solution of that equation depends on H, and H is an
+    integral. So the candidate is evaluated against the derived equation
+    at the paper's exponent and at wrong ones, and the contrast is
+    reported as the measurement it is.
+    """
+    if rule.name != "lemma_A6_heat":
+        return Judgement(False, obstruction=f"{rule.name} is not Lemma A.6")
+
+    try:
+        derivation = derive_exterior_ode()
+    except AssertionError as err:
+        return Judgement(False, obstruction=str(err))
+
+    h = 0.2
+    probes = (0.3, 0.8, 1.5, 3.0, 7.0)
+    scale = max(abs(_profile_derivatives(Z, h)[0]) for Z in probes)
+    measured = {}
+    for label, A in (("A = 1/2 + h", 0.5 + h), ("A = 1/2", 0.5),
+                     ("A = 1/2 + 2h", 0.5 + 2 * h)):
+        measured[label] = max(abs(_ode_residual(derivation, Z, A, h))
+                              for Z in probes) / scale
+
+    if measured["A = 1/2 + h"] > 1e-4:
+        return Judgement(False, obstruction=(
+            f"the paper's exponent does not satisfy the derived equation: "
+            f"residual {measured['A = 1/2 + h']:.2e}, so either the "
+            f"reduction or the profile is wrong"))
+    if min(v for k, v in measured.items() if k != "A = 1/2 + h") < 1e-2:
+        return Judgement(False, obstruction=(
+            "a wrong exponent also satisfies the derived equation, so the "
+            "check cannot tell them apart and establishes nothing"))
+
+    return Judgement(
+        True,
+        statement=("the exterior equation, with the similarity field "
+                   "substituted, reduces to exactly one ordinary "
+                   "differential equation: " + derivation.ode_text()),
+        covers=("the reduction holds for every exponent A, symbolically. "
+                "WHICH exponent solves it is measured on the paper's "
+                "profile and is not covered"),
+        whole_domain=False,
+        detail=[
+            "the residual collapsed to a single power of s, which is the "
+            "similarity structure closing and is checked, not assumed",
+            "derived with A symbolic, so the equation is not specific to "
+            "the exponent the paper picks",
+            f"the paper's A = 1/2 + h gives relative residual "
+            f"{measured['A = 1/2 + h']:.1e} against the derived equation",
+            f"A = 1/2 gives {measured['A = 1/2']:.2f} and A = 1/2 + 2h gives "
+            f"{measured['A = 1/2 + 2h']:.2f}, so the equation distinguishes "
+            f"them rather than accepting anything",
+            "the second half is quadrature, so the rule is NOT marked exact "
+            "and this is a partial result by construction",
+        ])
 
 
 @ns_rule("lemma_A6_heat")

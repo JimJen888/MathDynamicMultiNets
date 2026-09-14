@@ -289,6 +289,19 @@ class RenMachine:
         self.note("verify", report.summary().splitlines()[0])
         return report
 
+    def check_proof(self, claims, **kwargs):
+        """Check a proof someone else wrote and ledger what it rests on.
+
+        The audit, not the verdict, is the product. See `audit`.
+        """
+        from . import audit as audit_mod
+
+        report = audit_mod.check_proof(self, claims, **kwargs)
+        self.note("check_proof",
+                  f"{report.verdict()} over {len(report.derived)} derived "
+                  f"steps, {len(report.assumptions)} assumption(s)")
+        return report
+
     def derive(self, givens: Sequence[str], target: str, max_rounds: int = 8,
                trusted_only: bool = True, max_known: int = 600):
         """Saturate from several givens instead of walking one path.

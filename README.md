@@ -41,10 +41,30 @@ end, same `fa - fb` fusion; the head goes from `num_classes` logits to
 ```bash
 conda env create -f environment.yml      # python 3.10, numpy, torch+CUDA, pytest
 conda activate dynamicmultinet
-python -m pytest tests/ -q               # 107 tests, ~25 s
+python -m pytest tests/ -q               # 135 tests, ~80 s
 
-python examples/run_navier_stokes.py     # experiment 1
-python examples/run_decomposition.py     # experiment 1b
+python examples/run_navier_stokes.py     # experiment 1: the construction as rules
+python examples/run_complete.py          #   the assembled chain to the theorem
+python examples/run_census.py            #   every rule, how it was formed
+
+#   the eleven intermediate results, decomposed one at a time
+python examples/run_construction.py      #   Thm 4.6, Props 5.5, 7.5, 9.6
+python examples/run_initialize.py        #   Prop 9.5, on the order calculus
+python examples/run_summation.py         #   Prop 9.9
+python examples/run_theorem.py           #   Prop 10.1 and Theorem 1.1
+python examples/run_force_extension.py   #   Lemma 10.3
+python examples/run_energy_bound.py      #   Lemma 10.4
+python examples/run_comparison.py        #   Lemma 10.5
+
+#   and the experiments that found out how to do it
+python examples/run_decomposition.py     #   the first attempt, and what it missed
+python examples/run_discharge.py         #   replacing an import by its proof
+python examples/run_estimate.py          #   one granted estimate, taken apart
+python examples/run_estimates.py         #   the rest of them
+python examples/run_deeper.py            #   the computations one level further
+python examples/run_leaf_census.py       #   how much of it is named mathematics
+python examples/run_apparatus.py         #   why the front half needed a prerequisite
+python examples/run_tail.py              #   how much closed before it did
 python examples/run_multiplication.py    # experiment 2
 python examples/run_geometry.py          # experiment 3
 python examples/run_robotics.py          # appendix A
@@ -741,6 +761,229 @@ real work. And scaling fixes the exponent of an inequality that is true; it
 does not make one true. An admitted rule is a proved exponent sitting on a
 named assumption, which is exactly the standing of the rules that shipped.
 
+### Lemma 10.5, the one I said had no representation
+
+I classified the comparison lemma as out of reach because it "turns on a
+pressure flux controlled by Riesz transforms on the whole space, and
+nothing here models that". That was a claim about the machine made without
+reading the proof. `run_comparison.py` follows the paper's own argument,
+section by section, using its section names.
+
+```
+derived steps: 15, validated: 15
+leaves that are assertions about the construction: 0
+inputs: 4  -- the lemma's stated hypotheses
+```
+
+The Riesz transforms appear inside a registered fact, exactly the way
+Cauchy-Schwarz did in the energy bound, and the argument around them is an
+implication like any other: subtract the equations, identify the pressure
+gradient by a Liouville argument on a harmonic tempered distribution,
+bound the pressure flux across an expanding sphere, pair with the cutoff,
+absorb the fluxes by Young, Gronwall from rest, let the cutoff exhaust the
+space.
+
+**This one is weaker than the previous two and the difference is worth
+naming.** Lemma 10.4 rested on six facts any analysis course covers. This
+rests on fifteen, and several are the paper's own computations rather than
+textbook theorems — the commutator kernel bound, and the claim that every
+power of `A_R` in the flux bounds is below two so Young absorbs them. Both
+are on the assumption list under their own names, and a reader should
+check those in the paper rather than take them from the file. A finer
+decomposition would push them further down; this one stops where the
+paper's prose stops.
+
+### The "quantitative" steps are transforms too
+
+I claimed five of the eleven were out of reach because they need a
+quantitative hypothesis, and that granting it would amount to granting the
+estimate. That was wrong, and the objection is simple: those five are
+**implications**. Each takes an input estimate and produces an output one,
+and its hypothesis is the preceding proposition's conclusion rather than a
+number smuggled in. Using the previous link is what a proof is.
+
+`run_force_extension.py` tests it on Lemma 10.3, the one I called hardest
+of the five.
+
+```
+derived steps: 8, validated: 8
+leaves that are assertions about the construction: 0
+inputs: 3  -- Lemma 10.2's conclusion and a choice of widths
+prior facts: 8
+```
+
+Eight facts, every one at home in an analysis course: a bump is smooth, a
+cutoff of width w has kth derivative of size w^-k, Leibniz, the
+Weierstrass M-test extended to derivative series, a C^k-convergent series
+of smooth functions has a smooth sum, Borel's matching construction. None
+names the construction, and a test asserts that.
+
+The step worth being suspicious of is the one where the schedule does the
+work, because it would be easy for that single rule to be the whole lemma
+in disguise. It is not taken on trust: the package already runs that
+schedule on instances and measures it against a naive alternative, at
+1.0000 over 400 checks with 377 distinct.
+
+So the category was wrong, and the same reading applies to the other four
+grouped with it. What survives is narrower and worth keeping separate: a
+chain of transforms is only as good as where it starts, and this chain
+starts at an existential about a function. The transforms were never the
+obstacle.
+
+### Proving an existential by checking the candidate
+
+The right way to prove "there exists a profile with these properties" is
+not to deduce it, which no chain of implications does, but to exhibit the
+paper's candidate and verify the conditions. Two of Theorem 4.6's four are
+now attacked that way.
+
+**The moment identities, exactly.** They are a finite linear system over
+the rationals, so `witness.py` solves it and checks the solution. The
+coefficients come out as `1/40, -11/24, 9/5` and every condition holds on
+the nose. The arithmetic stays exact because of a substitution the
+construction already uses: half-integer powers of rationals are
+irrational, and under `x = t²` every moment is a closed-form rational.
+That matters, because a determinant near zero and a singular matrix are
+the same thing to a float and different things to the theorem.
+
+**The heat exterior, symbolically.** This was the extension I flagged
+twice and kept not building. Substituting the similarity field
+`s^-A H(2τ/s)` into the exterior equation and differentiating reduces it
+to a **single** power of s times an equation in `Z, H, H', H''`:
+
+```
+(-1/2 + 2A²) H  +  2 H'  +  (2 + 4A) Z H'  +  2 Z² H''  =  0
+```
+
+That collapse onto one power of s *is* the similarity structure closing,
+and `symdiff.py` checks it rather than assuming it. The equation is
+derived with the exponent left symbolic, so it is not specific to the
+paper's choice, and then the candidate is measured against it: the
+paper's `A = 1/2 + h` gives a relative residual of 3×10⁻⁵, while `A = 1/2`
+gives 0.44 and `A = 1/2 + 2h` gives 0.60.
+
+The second half is quadrature, so this is a partial result and the prover
+reports `whole_domain=False`, which means the rule is **not** marked
+exact. That flag existed since the provers were added and this is the
+first thing to use it, which is the sort of detail that tells you whether
+a distinction was real or decorative.
+
+### One of the eleven, decomposed into prior facts
+
+I claimed that however finely you decompose one of the eleven, the leaves
+carrying the analytic content would be assertions about the construction
+rather than rule applications. That is falsifiable, and
+`run_energy_bound.py` falsifies it for Lemma 10.4.
+
+The energy bound has the most elementary proof of the eleven. Pair the
+equation with the velocity, watch the nonlinearity drop out because the
+field is divergence-free, discard the dissipation because it has a sign,
+apply Cauchy-Schwarz, divide by the norm, integrate from rest. Six facts
+are registered as prior rules and each is general, reusable and mentions
+nothing about profiles, pulses, cones or the correction cycle.
+
+```
+derived steps:                         6
+validated by a rule the machine holds: 6
+leaves that are assertions about this construction: 0
+leaves that are the lemma's own hypotheses: 3
+prior facts the whole thing rests on: 6
+```
+
+Zero. Every derived step went through a registered textbook fact, and the
+only inputs are the lemma's own hypotheses, which is what a lemma is
+supposed to have. In the main run this lemma is an untrusted import; here
+it is derived, and that is a real change in its standing.
+
+Two caveats, and the second is a genuine weakness. The six facts are
+registered rather than proved here, so the honest status is *complete
+modulo six classical facts* — which is what mathematics does with a
+standard library, and is legitimate provided the list is printed, which it
+is. And I wrote both the decomposition and the prior rules, so I could
+have shaped the rules to fit the steps. The defence is that each rule is
+checkable by eye as a general statement, and a test asserts that none of
+them names anything from the construction. A stronger test would register
+the library first and then decompose a lemma nobody chose it for.
+
+**Instantiating it.** A proved lemma is inert: it is an implication and
+nothing here establishes its antecedents for the construction's own field.
+The paper supplies those, and so does any reader, so they are granted
+through `assume` with their standing declared. For this lemma the three
+are unusually cheap and a reader can check that in a minute: the force is
+*defined* as the residual, the field is a curl so its divergence vanishes,
+and starting from rest is stipulated by the theorem. With them the energy
+bound holds for the constructed field, all six steps validated, resting on
+six textbook facts and three instantiations.
+
+Doing that exposed a design flaw the arguments had not. `JoinRule` was
+built with **exact** premises, on the reasoning that a conjunction names
+what it collects. A join written for `u` would not fire on `U`, so every
+general lemma with a conjunction in it was single-use and could not be
+instantiated at all, while the unary rules were patterns and instantiated
+without trouble. Premises now carry `?name` placeholders bound
+consistently across a rule, and the instantiated lemma goes from three of
+six steps to six of six.
+
+One gap remains and it is the last honest one here. Identifying the cell
+this reaches with the imported step's cell is a judgement that two
+sentences in two different languages say the same thing. No machinery here
+makes that judgement, and asserting it would be exactly the unaudited
+claim this package exists to catch.
+
+What this does not generalise to is the other ten, and the experiment is
+more useful for showing that than for the lemma it settles. The three
+existentials assert an object into being and no chain of textbook facts
+produces one. The remaining bounds concern objects the construction
+builds, so their leaves reach for properties of those objects rather than
+for general facts. The eleven are not alike, and I had been treating them
+as though they were.
+
+### Auditing a proof someone else wrote
+
+The direction this is built toward. A proof assistant checks that each step
+follows and then says `theorem proved`, which is the right answer to the
+question it is asked and not the only question worth asking. A proof can be
+perfectly valid and rest on a citation nobody looked up, an estimate quoted
+from elsewhere, or a hypothesis the author supplied because they knew it
+was true. Validity does not separate those from a step checked against a
+computation, and this package tracks exactly that separation everywhere
+else, so `audit.py` makes it the product.
+
+A proof arrives as a list of steps, each naming the steps it follows from.
+The submitter's justification is recorded and **never consulted**: the
+machine finds the rule itself or reports that it cannot, so a justification
+that sounds right and matches no rule comes back unvalidated. What you get
+is a ledger.
+
+```
+verdict: INCOMPLETE
+  steps derived: 9, validated: 8
+  steps with no justification in this library:
+    7: NOT EXPRESSIBLE -- the statement has no cell the machine can read
+  inputs the proof assumes rather than derives: 5
+  steps that validated THROUGH an untrusted rule:
+    2: via lemma_5_4_summation
+  how each rule it used earned its place:
+    proved on its whole domain  bernstein_uniform, increment_identity, ...
+    exact arithmetic            assemble_local_field_theorem, ...
+    leans on an assumption      bernstein_uniform, decay_order_to_band_estimate
+    untrusted import            lemma_5_4_summation
+  the conclusion rests on 4 assumption(s): ...
+```
+
+The line about untrusted rules was added because the report earned it. On
+its first run over a real decomposition it showed a step counted as
+validated that had got there through an untrusted import, and "validated"
+was hiding the difference. A step is validated when the machine finds a
+rule joining two cells. Whether that rule is any good is a separate
+question and is now a separate line, with its own verdict.
+
+`check_proof` is a controller tool, so a model can submit a proof and get
+the ledger back. The rule facets are deliberately not exclusive buckets: a
+band inequality is exact arithmetic **and** proved on its whole domain
+**and** leaning on Bernstein, and an auditor needs all three rather than
+whichever one a classifier picked first.
+
 ### Conjunction, and the experiment that found it missing
 
 Taking one of the eleven apart turned up a gap I had not predicted, which
@@ -919,6 +1162,109 @@ Drawn on the specific tape, the exponent cell is read by `transcribe_unsafe` and
 five-step chain to the energy verdict goes through; marked `observed`, nothing
 in the library can start, and the reader that would close it is exactly what
 this run does not build.
+
+### Assembling the whole argument
+
+The sections above each settle one question. This one is what they add up
+to, and it is the part I did not expect to reach.
+
+**All eleven intermediate results are decomposed.** Every one was a single
+untrusted label when this began — a rule that read one cell name and wrote
+another, with the mathematics living entirely in the docstring. Each now
+has a decomposition underneath it, following the paper's own proof, whose
+leaves are named theorems or the construction's definitions.
+
+The front half needed one prerequisite the back half did not. Sections 4
+to 9 reason in the construction's own order calculus and name no public
+theorem at all, which is where I stopped once and said so. That was half
+wrong: the calculus is **Proposition 6.6**, a stated result with a proof,
+so registering it cites a proposition rather than paraphrasing prose.
+`apparatus.py` holds it — the product laws, both operator tables, the
+sum-across-orders rule — as exact rational arithmetic. With it in place
+Proposition 9.5 reproduces the paper's own exponents:
+
+```
+W(1/2,1) squared is W(1,2), radial derivative gives W(99999/100000, 2)
+the paper states 1 - kappa_s                              matches
+```
+
+**The chain closes.**
+
+```
+11 of 11 intermediate results, theorem reached: yes
+named theorems 77 | granted estimates 25 | links 25 | correspondences 11
+```
+
+**And the 25 granted estimates are discharged.** Nine decomposed, four
+duplicates, two pointing back into the chain, one that turned out to be a
+*definition* rather than a claim (the scale at which the pulses are
+introduced is chosen), and one already covered by another entry. Nothing
+netted away; the ledger prints all of it. Two of them the machine does
+better than cite: Lemma A.6's profile equation comes out of `symdiff`
+substituting the ansatz and differentiating, and the increment identity
+the cycle gains rest on was proved by expanding it in the one-jet.
+
+### Every rule, and how it was formed
+
+This machine forms rules four ways, and the census reads each rule's own
+state rather than a label.
+
+```
+KNOWN       144   named theorems and the construction's definitions
+DISCOVERY    12   instances validated against an independent oracle
+PROVED        3   decided on the whole domain, no instances in them
+CHAINING      1   a found path kept as one rule
+```
+
+Counted apart: **eleven superseded imports**, still in the library and
+still untrusted, each with a decomposition reaching the same cell. Folding
+those into KNOWN would suggest the argument still runs through them, so a
+test asserts they stay untrusted.
+
+That table undersells two of the four, and the correction matters. It
+counts rules *created* by keeping a found path, which happened once. What
+search actually did:
+
+```
+links the machine FOUND rather than was told:  137
+rule applications selected by those searches:  136
+of those, conjunctions found by saturation:     57
+```
+
+Every one was a search over 160 rules, handed two cells and asked for a
+path. The prose justification beside each step is recorded for the reader
+and **never consulted**, which is what makes the number mean anything: a
+step whose reason sounds right and matches no rule comes back unvalidated,
+and several did. Fifty-seven are conjunctions found by saturation rather
+than by walking a path — when the decomposition experiment first flagged
+the missing conjunction I read it as one failing link out of eight, and it
+turns out to be over forty percent of every link in the finished argument.
+
+Search also chose things nobody specified: the order of the four
+corrections in the cycle, and the seventeen-step path to the theorem.
+
+### What this is, and what it is not
+
+It is the paper's argument assembled, every link found by the machine,
+every leaf named, with a printed ledger of what is granted and a test that
+fails if that ledger quietly grows.
+
+It is not a proof of the Navier–Stokes result. The leaves are named
+theorems a reader checks against a textbook, and the construction's own
+definitions, which have no proofs because they are choices. Between the
+decompositions sit **eleven correspondences** — my judgements that a cell
+one decomposition reaches and a cell the next consumes make the same
+statement. They are recorded with my name on them so a second reader can
+reject any of them, and they are now the weakest items by a clear margin.
+
+The honest summary of the arc: I predicted where this method would break
+at least six times, and was wrong every time. Instances cannot reach
+uniform claims — right, and beside the point. Implications cannot produce
+existentials — right, and the paper produces one with Banach's fixed point
+theorem. The front half uses unknown mathematics — wrong, it uses
+Proposition 6.6. The remaining four are where the estimates live — wrong,
+they were simply unattempted. Each correction came from the reader rather
+than from me noticing.
 
 **Experiment 2 — the distributive rule** (`run_multiplication.py`)
 
@@ -1216,6 +1562,8 @@ dynamicmultinets/
                  compared in the specific domain
   train.py       fitting a rule; hard-case mining; specialists
   verify.py      trust, grounding strength, counterexamples
+  audit.py       check a proof someone else wrote and ledger what it rests
+                 on: proved, exact, checked, assumed, or merely untrusted
   provers.py     the third way a rule earns its standing: decided on its
                  whole domain rather than sampled, so `exact` and not
                  `accurate`. Narrow on purpose
@@ -1223,6 +1571,13 @@ dynamicmultinets/
                  cycle's induction and derives its budget
   symalg.py      exact polynomial algebra -- settles pointwise identities by
                  expanding them in the one-jet
+  symdiff.py     symbolic differentiation of the similarity ansatz, which
+                 derives the profile equation instead of quoting it
+  apparatus.py   the construction's order calculus, from Proposition 6.6:
+                 how the coefficient classes compose and how the operators
+                 move between them, as exact rational arithmetic
+  witness.py     builds a witness for an existential and checks its finite
+                 conditions exactly, naming the ones it cannot reach
   normcalc.py    function space norms as rules: exponents derived from
                  scaling, analytic content assumed by name
   proof.py       best-first search over rule chains, plus `saturate`:

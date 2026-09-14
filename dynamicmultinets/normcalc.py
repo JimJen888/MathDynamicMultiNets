@@ -686,6 +686,63 @@ def required_estimate(library, chain: tuple[str, ...] = (
     return start, requirements(needed)
 
 
+#: What the bridge below assumes, stated once so it cannot be mislaid.
+BRIDGE = ("the residual at a stage with decay order sigma obeys an L^2 band "
+          "estimate with scale exponent sigma and frequency exponent -2. "
+          "This is the content of Propositions 7.5 and 9.6 and is ASSUMED: "
+          "nothing here derives a norm bound from a decay order, and the "
+          "frequency exponent in particular is an input, not a consequence")
+
+
+@_norm_rule("decay_order_to_band_estimate")
+def make_decay_order_to_band_estimate() -> PythonRule:
+    """The bridge from the construction's cells into the norm calculus.
+
+    Until now these were two languages that never met. The correction
+    cycle moves decay orders around; the norm calculus moves estimates
+    around; nothing connected them, so a decomposition that crossed
+    between the two broke there and every chain in the calculus had to be
+    started by hand.
+
+    This connects them, and the honest part is what it costs. A decay
+    order is a statement about a power of the concentration scale. A band
+    estimate is a statement about a norm on a frequency band. Turning the
+    first into the second is not bookkeeping, it is exactly the analytic
+    content of Propositions 7.5 and 9.6, and this rule does not derive it.
+    It asserts it, names it in `assumes`, and every chain that crosses the
+    bridge now carries that assumption to the end and is counted as
+    resting on it.
+
+    So the bridge is worth having for the same reason the eleven are worth
+    having: it makes the dependency visible and lets the machinery on
+    either side of it run. It is not progress on the estimate.
+    """
+    def fn(c: Content) -> Content | None:
+        m = re.fullmatch(r"\s*state\((.*)\)\s*", c.text.replace(" ", ""))
+        if not m:
+            return None
+        fields = dict(part.split("=", 1) for part in m.group(1).split(","))
+        if "B" not in fields:
+            return None
+        # The stage's decay order is what the wave order sits above.
+        sigma = Fraction(fields["B"]) - Fraction(1, 2)
+        if sigma < 0:
+            return None
+        return Content.abstract(
+            _write("est", _EST, {"d": Fraction(3), "dv": Fraction(0),
+                                 "ip": Fraction(1, 2), "fr": Fraction(-2),
+                                 "sc": sigma}),
+            derivation="assumed: a decay order gives an L^2 band estimate")
+
+    rule = PythonRule(
+        "decay_order_to_band_estimate", fn, ABSTRACT, ABSTRACT,
+        description="a stage's decay order, read as an L^2 band estimate",
+        source="state(...)->est(d=3,dv=0,ip=1/2,fr=-2,sc=B-1/2)",
+        exact=True, trusted=True)
+    rule.assumes = (BRIDGE,)
+    return rule
+
+
 def install_norm_rules(library) -> None:
     for factory in NORM_RULES.values():
         library.add(factory(), replace=True)

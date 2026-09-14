@@ -56,11 +56,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from dynamicmultinets import JoinRule, RenMachine                   # noqa: E402
+from dynamicmultinets import Claim, JoinRule, RenMachine            # noqa: E402
 from dynamicmultinets.navierstokes import install_navier_stokes_rules  # noqa: E402
 from dynamicmultinets.normcalc import (est, glob, install_norm_rules,  # noqa: E402
                                        required_estimate, vanishes)
-from dynamicmultinets.nsderivation import install_derivation_rules  # noqa: E402
+from dynamicmultinets.nsderivation import (initial_state,           # noqa: E402
+                                           install_derivation_rules)
 from dynamicmultinets.nsmechanisms import install_mechanism_rules   # noqa: E402
 
 H = "1/200"
@@ -91,13 +92,19 @@ STEPS = [
                "growth the background expansion actually has",
          why="the growth bound is Proposition 5.5's, and is assumed here"),
 
-    dict(key="D", from_=None,
+    dict(key="F", from_=None,
+         cell=initial_state(),
+         claim="the cycle at stage zero, with its decay orders",
+         why="Proposition 9.5 leaves the construction here"),
+
+    dict(key="D", from_="F",
          cell=est(d=3, dv=0, ip=Fraction(1, 2), fr=Fraction(-2),
                   sc=Fraction(1, 5)),
          claim="an L^2 band estimate for one correction, with scale "
                "exponent sigma_0 = 1/5",
-         why="THE analytic input: this is what Propositions 9.6 and 7.5 "
-             "deliver and nothing here derives"),
+         why="the bridge from a decay order to a norm bound. THE analytic "
+             "input, and now a named assumption in the library rather than "
+             "a cell written into this file"),
 
     dict(key="E", from_=None,
          cell="increment(divfree=1,field=0)",
@@ -153,52 +160,19 @@ STEPS = [
 ]
 
 
-def check(machine: RenMachine) -> list[dict]:
-    """Ask the machine to justify each link, rather than asserting it."""
-    by_key = {step["key"]: step for step in STEPS}
-    results = []
-    for step in STEPS:
-        row = dict(step)
-        if step["from_"] is None:
-            row["status"] = "INPUT"
-            row["detail"] = "assumed by the decomposition, not derived"
-        elif step["cell"] is None:
-            row["status"] = "NOT EXPRESSIBLE"
-            row["detail"] = "the statement has no cell in any sublanguage"
-        elif isinstance(step["from_"], tuple):
-            # Several established facts, one conclusion. A chain has
-            # nowhere to put this, which is what `JoinRule` and
-            # `machine.derive` were added for: saturate from the premises
-            # and see whether the collecting step fires.
-            premises = [by_key[k]["cell"] for k in step["from_"]]
-            if any(p is None for p in premises):
-                row["status"] = "PREMISE NOT EXPRESSIBLE"
-                row["detail"] = ("one of the facts it collects has no cell, "
-                                 "so the conjunction cannot be stated either")
-            else:
-                derived = machine.derive(premises, step["cell"], max_rounds=4,
-                                         trusted_only=False)
-                if derived.found:
-                    row["status"] = "VALIDATED"
-                    row["detail"] = (f"{derived.steps[-1].rule} collecting "
-                                     f"{', '.join(step['from_'])}")
-                else:
-                    row["status"] = "NO CONJUNCTION"
-                    row["detail"] = ("no join rule collects these; "
-                                     + (derived.note or ""))
-        else:
-            premise = by_key[step["from_"]]["cell"]
-            proof = machine.prove(premise, step["cell"], max_depth=3,
-                                  trusted_only=False)
-            if proof.found:
-                row["status"] = "VALIDATED"
-                row["detail"] = " then ".join(proof.rule_names())
-            else:
-                row["status"] = "NO RULE"
-                row["detail"] = (f"nothing in the library takes "
-                                 f"{step['from_']} to this cell")
-        results.append(row)
-    return results
+def as_claims() -> list[Claim]:
+    """The decomposition in the form `audit.check_proof` takes.
+
+    Written out rather than checked here, because the checking belongs in
+    the package. This file's job is to be a realistic submission: the
+    steps a reader would write, with the premises named, and nothing
+    tuned to make the machine look good.
+    """
+    return [Claim(key=s["key"], cell=s["cell"],
+                  premises=((s["from_"],) if isinstance(s["from_"], str)
+                            else tuple(s["from_"] or ())),
+                  claim=s["claim"], justification=s["why"])
+            for s in STEPS]
 
 
 def assemble_rule() -> JoinRule:
@@ -248,31 +222,21 @@ def main() -> None:
     print("=" * 78)
     print(__doc__.split("Run:")[0].strip().split("\n\n", 1)[1])
 
-    results = check(machine)
+    audit = machine.check_proof(as_claims())
     print("\n--- the decomposition, step by step ---")
-    for row in results:
-        arrow = ("" if row["from_"] is None else
-                 f"  [from {row['from_'] if isinstance(row['from_'], str) else ', '.join(row['from_'])}]")
-        print(f"\n  {row['key']}.{arrow} {row['claim']}")
-        print(f"      because: {row['why']}")
-        print(f"      cell:    {row['cell'] if row['cell'] else '(none)'}")
-        print(f"      {row['status']}: {row['detail']}")
+    by_key = {v.key: v for v in audit.verdicts}
+    for step in STEPS:
+        v = by_key[step["key"]]
+        origin = step["from_"]
+        arrow = ("" if not origin else
+                 f"  [from {origin if isinstance(origin, str) else ', '.join(origin)}]")
+        print(f"\n  {step['key']}.{arrow} {step['claim']}")
+        print(f"      because: {step['why']}")
+        print(f"      cell:    {step['cell'] if step['cell'] else '(none)'}")
+        print(f"      {v.status}: {v.detail}")
 
-    inputs = [r for r in results if r["status"] == "INPUT"]
-    links = [r for r in results if r["status"] != "INPUT"]
-    validated = [r for r in links if r["status"] == "VALIDATED"]
-
-    print("\n--- the number you asked for ---")
-    print(f"  derived steps: {len(links)}")
-    print(f"  validated against rules the machine already holds: "
-          f"{len(validated)}")
-    for label in ("NO RULE", "NO CONJUNCTION", "NOT EXPRESSIBLE"):
-        hits = [r for r in links if r["status"] == label]
-        if hits:
-            print(f"  {label:16} {len(hits)}  "
-                  f"(steps {', '.join(r['key'] for r in hits)})")
-    print(f"  inputs the decomposition assumes: {len(inputs)}  "
-          f"({', '.join(r['key'] for r in inputs)})")
+    print("\n--- the audit ---")
+    print(audit.report())
 
     print("\n--- what this actually shows ---")
     print("  Every link that is one rule applied to one cell was validated.")
