@@ -89,6 +89,15 @@ LINKS = [
      "theorem_1_1_forced_blowup", "localized_fields(L)", "STEPS_1_1"),
 ]
 
+#: The eleven as they were originally imported: one untrusted rule each,
+#: reading one cell name and writing another, with the mathematics living
+#: entirely in the docstring. In LINKS order, so a stage of the walk and
+#: the import it supersedes line up.
+IMPORTS = ["thm_4_6_profiles", "prop_5_5_background", "prop_7_5_stress",
+           "prop_9_5_initialize", "prop_9_6_induction", "prop_9_9_summation",
+           "prop_10_1_localize", "lemma_10_3_force", "lemma_10_4_energy",
+           "lemma_10_5_unique", "thm_1_1_blowup"]
+
 MODULES = ["run_construction", "run_initialize", "run_summation",
            "run_theorem", "run_force_extension", "run_energy_bound",
            "run_comparison"]
@@ -285,6 +294,42 @@ def walk(machine):
     return out
 
 
+def discharge_the_imports(machine, stages):
+    """Give the eleven imported steps the standing their derivations earn.
+
+    They were imported untrusted, which was right: a rule that reads one
+    cell name and writes another, with the mathematics in the docstring,
+    has no standing at all. Each has since been decomposed to named
+    theorems and the paper's cited estimates, and the walk above derives
+    every one of them from the link before it using trusted rules only.
+
+    Leaving them untrusted after that is not caution, it is an
+    inconsistency. Every rule in the derivation is trusted; the conclusion
+    of a chain of trusted rules is not less established than its members.
+    So each is discharged, and what the chain leans on travels with it --
+    they come out `DERIVED (assumes N)` rather than trusted outright, and
+    the N is the honest part.
+
+    Returns the promoted rules.
+    """
+    from dynamicmultinets.navierstokes import install_navier_stokes_rules
+    from dynamicmultinets.nsderivation import install_derivation_rules
+
+    # Nine of the eleven come from `navierstokes`; Propositions 9.5 and 9.6
+    # are installed by `nsderivation` with the correction cycle they drive.
+    install_navier_stokes_rules(machine.library)
+    install_derivation_rules(machine.library)
+    out = []
+    for name, (label, source, chain_cell, got) in zip(IMPORTS, stages):
+        if not got.found:
+            continue
+        out.append(machine.discharge(
+            name, got,
+            f"{label}: {chain_cell} derived from {source} in "
+            f"{got.length} steps, every rule trusted"))
+    return out
+
+
 def main() -> None:
     print("=" * 78)
     print("One chain: cited prerequisites -> intermediate results -> theorem")
@@ -371,6 +416,20 @@ def main() -> None:
         print("  of assumed steps says is the rest of it: this is a")
         print("  derivation modulo the paper's estimates, and that is the")
         print("  strongest thing the word 'proof' can mean here.")
+
+    print("\n--- the eleven imports, discharged ---")
+    print("  Each of the eleven was imported as an untrusted label. Each is")
+    print("  now derived above by trusted rules only, so each is given the")
+    print("  standing that earns. Withholding it would mean trusting every")
+    print("  rule in a chain and not its conclusion.")
+    print()
+    promoted = discharge_the_imports(machine, stages)
+    for rule in promoted:
+        print(f"  {rule.name:22} DERIVED (assumes {len(rule.assumes):>2})")
+    print(f"\n  discharged: {len(promoted)} of {len(IMPORTS)}")
+    print("  `discharge` refuses if any rule in the derivation is itself")
+    print("  untrusted, which is what stops this being a way to manufacture")
+    print("  standing out of nothing.")
 
     print("\n--- what the chain rests on ---")
     print(f"  named theorems registered as rules:   {facts}")

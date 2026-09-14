@@ -554,6 +554,54 @@ class RenMachine:
                            f" ({p.nodes_expanded} nodes)")
         return p
 
+    def discharge(self, rule_name: str, p: proof_mod.Proof,
+                  statement: str = ""):
+        """Grant an imported rule its standing, because it has been derived.
+
+        The fourth route to trust, and the one this package was slowest to
+        build. A rule can be trusted because it is prior knowledge, because
+        it agreed with an oracle over many distinct instances, or because a
+        decision procedure decided it. This is the fourth: its conclusion
+        was reached from its premise by rules the library already trusts,
+        so withholding trust from the rule while extending it to every
+        member of the chain is an inconsistency rather than a caution.
+
+        That inconsistency stood here for a long time. The eleven steps of
+        the Navier-Stokes construction were imported as untrusted labels,
+        each was then decomposed to named theorems and the paper's cited
+        estimates, and the labels stayed untrusted afterwards because
+        nothing in the machine knew how to promote them.
+
+        The guard is the whole content of the method. Every rule in the
+        chain must itself be trusted, or the promotion is refused: trust
+        that can be manufactured from untrusted parts is not trust. What
+        the chain LEANS ON travels with it, so the union of every member's
+        `assumes` becomes the promoted rule's, and the rule table prints
+        `DERIVED (assumes N)` rather than a bare `DERIVED`.
+        """
+        rule = self.library.get(rule_name)
+        if not p.found:
+            raise ValueError(f"{rule_name} was not derived; nothing to discharge")
+        members = [self.library.get(n) for n in p.rule_names()]
+        untrusted = [m.name for m in members if not m.trusted]
+        if untrusted:
+            raise ValueError(
+                f"cannot discharge {rule_name}: the derivation uses untrusted "
+                f"rules {', '.join(sorted(set(untrusted)))}. A chain cannot "
+                f"grant standing it does not have.")
+        leans_on: list[str] = []
+        for member in members:
+            for a in getattr(member, "assumes", ()):
+                if a not in leans_on:
+                    leans_on.append(a)
+        rule.trusted = True
+        rule.derived = statement or (
+            f"derived in {p.length} steps: {p.start} => {p.target}")
+        rule.assumes = tuple(leans_on)
+        self.note("discharge",
+                  f"{rule_name} <- {p.length} steps, {len(leans_on)} assumed")
+        return rule
+
     def keep_proof(self, p: proof_mod.Proof, name: str, description: str = ""):
         rule = proof_mod.proof_to_rule(self.library, p, name, description)
         self.note("keep", f"{name} = {' -> '.join(p.rule_names())}")

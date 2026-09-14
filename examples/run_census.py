@@ -1,7 +1,7 @@
 """
 Experiment 1r: every rule, how it was formed, and the graph to the theorem.
 
-This machine forms rules in four ways, and the whole argument for
+This machine forms rules in five ways, and the whole argument for
 Theorem 1.1 is now built out of them. This file walks the finished library,
 classifies every rule by how it came to be trusted, and prints the graph
 that connects them to the theorem.
@@ -23,6 +23,12 @@ that connects them to the theorem.
   CHAINING    formed by composing rules already held, with `keep_proof`
               turning a found path into one rule. The composite inherits
               trust from its members and cannot launder it.
+
+  DERIVED     an imported rule given its standing because its conclusion
+              was reached from its premise by rules already trusted.
+              `machine.discharge` does this and refuses if any rule in the
+              chain is untrusted. The eleven intermediate results came in
+              as untrusted labels and leave by this route.
 
 The graph is the second half. Eleven intermediate results carry the
 argument from the profiles to the theorem, each now backed by its own
@@ -81,12 +87,19 @@ def load(name: str):
     return module
 
 
-#: The original eleven. They are still in the library and still
-#: untrusted; each now has a decomposition that reaches the same cell, so
-#: they are superseded rather than used. Listing them separately is the
-#: point: a census that folded them into KNOWN would suggest the argument
-#: still runs through them.
-SUPERSEDED = {
+#: The original eleven, imported as untrusted labels. Each has since been
+#: decomposed AND derived: `run_complete.py` walks from one chain cell to
+#: the next using trusted rules only, and `machine.discharge` then gives
+#: each label the standing its derivation earns.
+#:
+#: This block used to say they were "still untrusted, superseded rather
+#: than used", and that was an inconsistency rather than a caution. Every
+#: rule in each derivation is trusted; withholding trust from the
+#: conclusion of a chain of trusted rules is not a higher standard, it is
+#: just wrong. They are counted apart from KNOWN all the same, because
+#: DERIVED and KNOWN are different provenance: one was cited, the other
+#: was reached here.
+THE_ELEVEN = {
     "thm_4_6_profiles", "prop_5_5_background", "prop_7_5_stress",
     "prop_9_5_initialize", "prop_9_6_induction", "prop_9_9_summation",
     "prop_10_1_localize", "lemma_10_3_force", "lemma_10_4_energy",
@@ -109,10 +122,12 @@ def how_formed(rule) -> str:
     """Which of the ways this rule came to be held."""
     if rule.name in OTHER_EXPERIMENTS:
         return "ELSEWHERE"
-    if rule.name in SUPERSEDED:
-        return "SUPERSEDED"
     if not rule.trusted:
         return "UNTRUSTED"
+    if getattr(rule, "derived", ""):
+        return "DERIVED"
+    if rule.name in THE_ELEVEN:
+        return "UNDISCHARGED"
     if isinstance(rule, CompositeRule):
         return "CHAINING"
     if getattr(rule, "proved", ""):
@@ -167,6 +182,24 @@ def build():
         for rule in getattr(module, "PRIOR", []):
             if rule.name not in machine.library.rules:
                 machine.library.add(rule)
+
+    # DERIVED: the eleven imports, discharged against their derivations.
+    #
+    # The walk belongs to `run_complete`, which holds the assembled library
+    # and the granted estimates, so the derivation is run there and the
+    # standing it produces is carried across by name. Carrying the three
+    # fields rather than re-deriving keeps one definition of what was
+    # established; `assumes` comes with it, which is the part that stops a
+    # promoted rule reading as unconditional.
+    complete = load("run_complete")
+    assembled, *_ = complete.build()
+    promoted = complete.discharge_the_imports(assembled,
+                                              complete.walk(assembled))
+    for rule in promoted:
+        if rule.name in machine.library.rules:
+            here = machine.library.get(rule.name)
+            here.trusted, here.derived = True, rule.derived
+            here.assumes = rule.assumes
     return machine
 
 
@@ -182,8 +215,8 @@ def main() -> None:
         groups.setdefault(how_formed(machine.library.get(name)), []).append(name)
 
     print("\n--- the census ---")
-    for kind in ("PROVED", "CHAINING", "DISCOVERY", "KNOWN", "SUPERSEDED",
-                 "UNTRUSTED", "ELSEWHERE"):
+    for kind in ("PROVED", "DERIVED", "CHAINING", "DISCOVERY", "KNOWN",
+                 "UNDISCHARGED", "UNTRUSTED", "ELSEWHERE"):
         names = groups.get(kind, [])
         if not names:
             continue
@@ -197,7 +230,7 @@ def main() -> None:
         if line.strip():
             print(line)
 
-    print("\n--- the four kinds, by what they are worth ---")
+    print("\n--- the five kinds, by what they are worth ---")
     print("  KNOWN      a citation. Worth what the source is worth, and the")
     print("             reader checks it rather than the machine.")
     print("  DISCOVERY  evidence over distinct instances against an")
@@ -207,6 +240,10 @@ def main() -> None:
     print("  PROVED     decided on the whole domain. No instances in it.")
     print("  CHAINING   only as good as what it composes, and the composite")
     print("             cannot become better than its worst member.")
+    print("  DERIVED    reached here from trusted rules. Worth what those")
+    print("             rules and the hypotheses they lean on are worth,")
+    print("             and the assumes count beside each one says how")
+    print("             many of the latter there are.")
 
     print("\n--- the graph to the theorem ---")
     print("  Each cell is produced by the decomposition of the result named,")
@@ -280,14 +317,15 @@ def main() -> None:
     print("  is what makes ten cycles a ten-step proof instead of a forty-")
     print("  step one.")
 
-    used = sum(len(groups.get(k, [])) for k in
-                ("KNOWN", "DISCOVERY", "PROVED", "CHAINING"))
+    kinds = ("KNOWN", "DISCOVERY", "PROVED", "CHAINING", "DERIVED")
+    used = sum(len(groups.get(k, [])) for k in kinds)
     print(f"\n--- totals ---")
     print(f"  rules the argument uses: {used}")
-    for kind in ("KNOWN", "DISCOVERY", "PROVED", "CHAINING"):
+    for kind in kinds:
         print(f"    {kind:12} {len(groups.get(kind, [])):>4}")
-    print(f"  superseded by their decompositions: "
-          f"{len(groups.get('SUPERSEDED', []))}")
+    if groups.get("UNDISCHARGED"):
+        print(f"  imported and NOT discharged:        "
+              f"{len(groups['UNDISCHARGED'])}")
     print(f"  belonging to other experiments:     "
           f"{len(groups.get('ELSEWHERE', []))}")
     print()

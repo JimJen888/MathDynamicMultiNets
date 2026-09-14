@@ -1117,14 +1117,19 @@ def test_a_granted_estimate_decomposes_as_well():
 
 
 def test_every_rule_is_classified_by_how_it_was_formed():
-    """The census: each of the four ways this machine forms a rule, with
+    """The census: each of the five ways this machine forms a rule, with
     the classification read off the rule's own state rather than declared.
 
     The distinctions that matter are the ones that would be easy to blur.
-    A kept chain is untrusted until something checks it AS a chain. The
-    eleven original imports are still in the library and still untrusted,
-    so they are counted apart rather than folded into the known rules,
-    which would suggest the argument still runs through them.
+    A kept chain is untrusted until something checks it AS a chain.
+
+    The eleven imports are the case this test used to get wrong. It
+    asserted they stay untrusted, which read as rigour and was an
+    inconsistency: each is derived from its predecessor by trusted rules
+    only, and the conclusion of a chain of trusted rules is not less
+    established than its members. They are now DERIVED, and counted apart
+    from KNOWN because the provenance differs -- one was cited, the other
+    was reached here.
     """
     import importlib.util
     from pathlib import Path
@@ -1147,10 +1152,43 @@ def test_every_rule_is_classified_by_how_it_was_formed():
     assert groups["CHAINING"] == ["cycle_once"]
     assert len(groups["DISCOVERY"]) == 12
     assert len(groups["KNOWN"]) > 100
-    # The originals stay visible and stay untrusted.
-    assert len(groups["SUPERSEDED"]) == 11
-    for name in groups["SUPERSEDED"]:
-        assert not machine.library.get(name).trusted
+    # The eleven imports, discharged against their own derivations.
+    assert len(groups["DERIVED"]) == 11
+    assert "UNDISCHARGED" not in groups
+    for name in groups["DERIVED"]:
+        rule = machine.library.get(name)
+        assert rule.trusted and rule.derived
+        # Trust travelled, and so did what the chain leans on. A promoted
+        # rule that came out with an empty `assumes` would be claiming the
+        # derivation was unconditional, which none of them is.
+        assert rule.assumes, name
+
+
+def test_a_derivation_cannot_launder_trust():
+    """`discharge` refuses a chain containing an untrusted rule.
+
+    This is the whole reason the method is safe to have. Without the
+    guard, one untrusted import anywhere in a chain would be promoted into
+    trust by the chain that used it, and every rule downstream would
+    inherit standing that nothing established.
+    """
+    from dynamicmultinets.rules import PythonRule
+    from dynamicmultinets.tapes import ABSTRACT, Content
+
+    m = RenMachine()
+    shaky = PythonRule("shaky", lambda c: Content.abstract("b")
+                       if c.text == "a" else None, ABSTRACT, ABSTRACT,
+                       exact=False, trusted=False)
+    target = PythonRule("target", lambda c: None, ABSTRACT, ABSTRACT,
+                        exact=False, trusted=False)
+    m.library.add(shaky)
+    m.library.add(target)
+
+    got = m.prove("a", "b", max_depth=3, trusted_only=False)
+    assert got.found
+    with pytest.raises(ValueError, match="untrusted"):
+        m.discharge("target", got)
+    assert not m.library.get("target").trusted
 
 
 def test_search_and_chaining_are_counted_for_what_they_do():

@@ -571,8 +571,9 @@ and confirming that an increment which is *not* divergence-free leaves the
 Everything above is sampling. A rule is asked questions and compared with an
 oracle, which settles it on the questions asked and says nothing about the
 rest — right for a rule that reads pixels or integrates a field, and wrong
-for a rule whose content is a statement about every case. That is why the
-imported steps stay untrusted however many instances agree.
+for a rule whose content is a statement about every case. That is why no
+number of agreeing instances trusts an imported step. What eventually does
+is a derivation: see [DERIVED](#every-rule-and-how-it-was-formed) below.
 
 Three of the paper's derivations are not estimates at all, and all three
 are plain enough to carry out here rather than import. One is an identity,
@@ -639,10 +640,11 @@ no instances in it, and the library prints such a rule as `PROVED` rather
 than `trusted` so the two cannot be confused.
 
 Everything below this point was written later, after the eleven were
-decomposed. The main run still reports them as untrusted imports, because
-that is what they are *to it*: the decompositions live in their own files
-and reach the same cells by a different route. Both readings are in the
-repository on purpose.
+decomposed, and later still they were **discharged**: each is derived from
+its predecessor by trusted rules only, so each now holds the standing that
+earns. The main run still installs them as imports, because that is what
+they are *to it* — the decompositions live in their own files — and
+`run_complete.py` is where the derivation and the promotion happen.
 
 The guard against the expensive mistake is that the prover has to be able to
 fail, and the tests break both halves to show it does. Move the rule's
@@ -1218,11 +1220,9 @@ If you want the end state rather than the route, read from here.
 The sections above each settle one question. This one is what they add up
 to, and it is the part I did not expect to reach.
 
-**All eleven intermediate results are decomposed.** Every one was a single
-untrusted label when this began — a rule that read one cell name and wrote
-another, with the mathematics living entirely in the docstring. Each now
-has a decomposition underneath it, following the paper's own proof, whose
-leaves are named theorems or the construction's definitions.
+**All eleven intermediate results are decomposed.** Each now has a
+decomposition underneath it, following the paper's own proof, whose leaves
+are named theorems or the construction's definitions.
 
 The front half needed one prerequisite the back half did not. Sections 4
 to 9 reason in the construction's own order calculus and name no public
@@ -1269,6 +1269,12 @@ paper asserts and this repository grants. Twenty are my reading that a
 cell in one decomposition's language says what a cell in the next one's
 language says, and those are the weakest items in the whole argument.
 
+**And the eleven imports are discharged.** Each was an untrusted label when
+this began. Each is now derived from the link before it by trusted rules
+only, and `machine.discharge` gives each the standing that earns, carrying
+what the chain leans on into the promoted rule so none of them reads as
+unconditional. The table in the next section lists them with their counts.
+
 **And the 25 granted estimates are discharged.** Nine decomposed, four
 duplicates, two pointing back into the chain, one that turned out to be a
 *definition* rather than a claim (the scale at which the pulses are
@@ -1280,7 +1286,7 @@ the cycle gains rest on was proved by expanding it in the one-jet.
 
 ### Every rule, and how it was formed
 
-This machine forms rules four ways, and the census reads each rule's own
+This machine forms rules five ways, and the census reads each rule's own
 state rather than a label. `run_census.py` prints this.
 
 | type | how it is formed | rules |
@@ -1289,11 +1295,37 @@ state rather than a label. `run_census.py` prints this.
 | **CHAINING** (1) | a found path kept as one rule, then checked *as* a chain | `cycle_once` |
 | **DISCOVERY** (12) | instances validated against an oracle taking an independent route | `energy_budget_3_5`, `eq_4_1_exponents`, `lemma_4_5_cone`, `lemma_5_4_summation`, `lemma_7_4_pulse`, `lemma_A1_moments`, `lemma_A6_heat`, `lemma_10_3_borel`, `lemma_10_4_energy_bound`, `prop_9_6_decay`, `prop_9_6_table`, `prop_10_1_curl_order` |
 | **KNOWN** (144) | registered from outside: a named theorem, or a definition the construction makes | listed below by source |
-| *superseded* (11) | the original imports, still untrusted, each now with a decomposition reaching the same cell | `thm_4_6_profiles`, `prop_5_5_background`, `prop_7_5_stress`, `prop_9_5_initialize`, `prop_9_6_induction`, `prop_9_9_summation`, `prop_10_1_localize`, `lemma_10_3_force`, `lemma_10_4_energy`, `lemma_10_5_unique`, `thm_1_1_blowup` |
+| **DERIVED** (11) | imported as an untrusted label, then reached here from its predecessor by trusted rules only, and discharged | `thm_4_6_profiles`, `prop_5_5_background`, `prop_7_5_stress`, `prop_9_5_initialize`, `prop_9_6_induction`, `prop_9_9_summation`, `prop_10_1_localize`, `lemma_10_3_force`, `lemma_10_4_energy`, `lemma_10_5_unique`, `thm_1_1_blowup` |
 
-Folding the superseded eleven into KNOWN would suggest the argument still
-runs through them, so they are counted apart and a test asserts they stay
-untrusted.
+**DERIVED is the fifth route and was the last one built.** For a long time
+these eleven stayed untrusted after being decomposed, and a test asserted
+they stayed that way. That read as rigour and was an inconsistency: every
+rule in each derivation is trusted, and the conclusion of a chain of
+trusted rules is not less established than its members. `machine.discharge`
+is the correction. It takes a rule and a derivation of its conclusion,
+refuses if any rule in the chain is itself untrusted, and otherwise grants
+the standing and carries the union of what the chain leans on into the
+promoted rule's `assumes`.
+
+```
+thm_4_6_profiles       DERIVED (assumes 13)
+prop_5_5_background    DERIVED (assumes  9)
+prop_7_5_stress        DERIVED (assumes 10)
+prop_9_5_initialize    DERIVED (assumes  6)
+prop_9_6_induction     DERIVED (assumes  7)
+prop_9_9_summation     DERIVED (assumes 17)
+prop_10_1_localize     DERIVED (assumes  9)
+lemma_10_3_force       DERIVED (assumes 12)
+lemma_10_4_energy      DERIVED (assumes 10)
+lemma_10_5_unique      DERIVED (assumes 20)
+thm_1_1_blowup         DERIVED (assumes 11)
+```
+
+The counts beside them are the point of carrying `assumes` across. None of
+the eleven comes out unconditional, and a promoted rule that did would be
+claiming its derivation needed nothing, which none of them does. They are
+still counted apart from KNOWN, because the provenance differs: a KNOWN
+rule was cited, a DERIVED one was reached here.
 
 **The 144 KNOWN rules, by which decomposition registers them.** Read the
 names: none of them is about this paper.

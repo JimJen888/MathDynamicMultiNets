@@ -155,6 +155,16 @@ class Rule(ABC):
         # this rule on its whole input domain. Empty for every rule whose
         # standing rests on instances, which is almost all of them.
         self.proved = ""
+        #: Set when the rule earned its standing by DERIVATION: its
+        #: conclusion was reached from its own premise by a chain of rules
+        #: that were already trusted. This is the route an imported result
+        #: takes once its proof has been assembled here, and it is kept
+        #: apart from `proved` on purpose. `proved` means a decision
+        #: procedure settled the rule on its whole domain and there is
+        #: nothing left to cite. This means the rule follows from what the
+        #: library already holds, which is worth exactly what those rules
+        #: are worth -- and `assumes` carries what they lean on.
+        self.derived = ""
         # Classical facts this rule leans on but does not establish. Empty
         # for nearly everything here; the norm calculus in `normcalc` is
         # where it matters, because an exponent computed exactly on top of
@@ -967,7 +977,9 @@ class RuleLibrary:
             # "proved" and "trusted" are not the same standing and the table
             # should not print them the same. A trusted rule agreed with
             # something on a lot of instances; a proved one was decided.
-            flag = ("PROVED" if r.proved else "trusted" if r.trusted
+            flag = ("PROVED" if r.proved
+                    else "DERIVED" if r.derived
+                    else "trusted" if r.trusted
                     else f"NOT TRUSTED, {r.stats.summary()}")
             if r.assumes and r.trusted:
                 flag += f" (assumes {len(r.assumes)})"
