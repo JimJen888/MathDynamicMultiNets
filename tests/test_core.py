@@ -1211,7 +1211,33 @@ def test_search_and_chaining_are_counted_for_what_they_do():
     assert conjunctions > 40
 
 
-def test_one_chain_reaches_the_theorem():
+def test_two_coefficients_can_be_offered_to_the_product_law():
+    """The gap that made Proposition 9.5 fail. `class_product` reads a
+    paired cell, because a product needs two inputs and a rule maps one
+    cell to one cell, and nothing built that cell. A step saying "these
+    two multiply" had both premises established and no way to combine
+    them, which is exactly what `JoinRule` is for."""
+    from fractions import Fraction
+
+    from dynamicmultinets.apparatus import install_apparatus, mean, wave
+
+    m = RenMachine()
+    install_apparatus(m.library)
+
+    # Two waves at order 1/2 multiply to order 1 at the summed harmonic.
+    got = m.derive([wave(Fraction(1, 2), 1)], wave(Fraction(1), 2),
+                   max_rounds=3)
+    assert got.found
+    assert "pair_waves" in got.rule_names()
+
+    # Two means, and a mean times a wave, go the same way.
+    assert m.derive([mean(Fraction(1, 5)), mean(Fraction(2, 5))],
+                    mean(Fraction(3, 5)), max_rounds=3).found
+    assert m.derive([mean(Fraction(1, 2)), wave(Fraction(1, 2), 3)],
+                    wave(Fraction(1), 3), max_rounds=3).found
+
+
+def test_the_links_and_joints_are_checked_separately():
     """The whole thing assembled: every intermediate result in place and
     Theorem 1.1 reached, with the ledger printed rather than netted off.
 
@@ -1232,17 +1258,83 @@ def test_one_chain_reaches_the_theorem():
 
     machine, facts, estimates, links, joins = module.build()
 
-    for label, _, _, chain_cell in module.LINKS:
-        assert machine.prove("anything", chain_cell, max_depth=3,
-                             trusted_only=False).found, label
-    assert machine.prove("anything", "theorem_1_1_forced_blowup",
-                         max_depth=4, trusted_only=False).found
+    # LINKS and JOINTS are different claims and are checked differently.
+    #
+    # An earlier version of this test asserted `prove("anything", cell)`
+    # for each link, which was vacuous: correspondences were registered
+    # with `assume`, whose rule fires from ANY cell, so every target was
+    # reachable in one step from nothing. It reported eleven of eleven on
+    # the strength of eleven assumptions. Correspondences are now bridges
+    # with specific premises, and the counts below are what that honestly
+    # leaves.
+    good = 0
+    for label, module_name, _, _, _, which in module.LINKS:
+        sub = importlib.util.spec_from_file_location(
+            module_name, path.parent / f"{module_name}.py")
+        mod = importlib.util.module_from_spec(sub)
+        sub.loader.exec_module(mod)
+        steps = (mod.CASES[which][1] if isinstance(which, int)
+                 else getattr(mod, which))
+        good += not machine.check_proof(steps).unvalidated
+    assert good == 11, good
+
+    joints = 0
+    previous = None
+    for label, _, _, chain_cell, entry, _w in module.LINKS:
+        if previous and entry:
+            joints += machine.prove(previous, entry, max_depth=2,
+                                    trusted_only=True).found
+        previous = chain_cell
+    assert joints == 10
 
     # The ledger. A chain reaching the theorem on a hundred granted
     # estimates would be worthless, so the counts are the result.
     assert facts >= 70
     assert estimates <= 30
-    assert joins == len(module.LINKS)
+
+
+def test_the_chain_runs_as_one_derivation():
+    """Started at one cell, the machine derives Theorem 1.1.
+
+    Links and joints are a weaker claim than this one, and both were
+    passing while this was not. The reason was that every link's entry
+    cell was granted as an axiom, and `assume` fires from ANY cell, so
+    saturation had each decomposition's inputs before it started and the
+    entry bridges never fired. `chain_supplied_cells` withholds them, so
+    a link that skipped its predecessor fails here.
+
+    The second thing this pins is that the steps are real. A join used to
+    record its PREMISE PATTERNS as the origins of its conclusion, and no
+    derived cell is ever spelled `solution_smooth(?B)`, so the walk back
+    from the target stopped at the first conjunction and every link
+    reported two steps. The length assertion below is what would catch
+    that returning.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    path = (Path(__file__).resolve().parents[1] / "examples"
+            / "run_complete.py")
+    spec = importlib.util.spec_from_file_location("complete", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    machine, *_ = module.build()
+    stages = module.walk(machine)
+
+    assert len(stages) == 11
+    assert all(got.found for *_, got in stages), [
+        label for label, _s, _c, got in stages if not got.found]
+
+    # Each link is walked through, not jumped over.
+    assert all(got.length >= 5 for *_, got in stages), [
+        (label, got.length) for label, _s, _c, got in stages]
+    assert sum(got.length for *_, got in stages) >= 100
+
+    # And the entry bridges actually carry the chain: every link but the
+    # first begins by receiving the previous link's conclusion.
+    for (_label, _src, _cell, got), (prev, *_) in zip(stages[1:], stages):
+        assert got.rule_names()[0].startswith("from:"), got.rule_names()[:3]
 
 
 def test_the_last_four_decompose():

@@ -342,6 +342,37 @@ def make_weakest_term() -> PythonRule:
     return rule
 
 
+def _pairing(name: str, left: str, right: str) -> JoinRule:
+    """Two established coefficients, offered to the product law as a pair.
+
+    `class_product` reads a `pair(X;Y)` cell, because a product needs two
+    inputs and a rule maps one cell to one cell. Nothing built that cell,
+    so a proof step of the form "these two multiply" had both its
+    premises established and no way to combine them -- which is exactly
+    the gap `JoinRule` exists to close, and it went unnoticed because the
+    only test of it was a decomposition that never multiplied anything.
+    """
+    rule = JoinRule(name, [left, right], f"pair({left};{right})",
+                    description="offer two coefficients to the product law")
+    rule.assumes = (PROP_6_6,)
+    return rule
+
+
+@_apparatus("pair_means")
+def make_pair_means() -> JoinRule:
+    return _pairing("pair_means", "M(?a)", "M(?b)")
+
+
+@_apparatus("pair_mean_wave")
+def make_pair_mean_wave() -> JoinRule:
+    return _pairing("pair_mean_wave", "M(?a)", "W(?b,?n)")
+
+
+@_apparatus("pair_waves")
+def make_pair_waves() -> JoinRule:
+    return _pairing("pair_waves", "W(?a,?m)", "W(?b,?n)")
+
+
 def clears(achieved: str, required) -> bool:
     """Does a derived order meet what the next stage requires?
 

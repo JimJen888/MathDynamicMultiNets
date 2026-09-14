@@ -418,11 +418,28 @@ class JoinRule(Rule):
         return out
 
     def fires(self, known: dict[str, Content]) -> Content | None:
-        """The conclusion, when every premise has been established.
+        """The conclusion, when every premise has been established."""
+        out = self.fires_from(known)
+        return None if out is None else out[0]
+
+    def fires_from(
+        self, known: dict[str, Content]
+    ) -> tuple[Content, tuple[str, ...]] | None:
+        """The conclusion AND the cells it was actually collected from.
 
         Premises are matched in order, each narrowing the binding, so the
         cost is the number of known cells times the number of premises
         rather than anything combinatorial.
+
+        The second half of the return value is the part that matters to
+        anything reconstructing a proof. `self.premises` are PATTERNS --
+        `solution_smooth(?B)` -- and no derived cell is ever spelled that
+        way, so a caller that records the patterns as this step's origins
+        records something it can never follow. `saturate` did exactly that,
+        and its walk back from the target stopped at the first conjunction:
+        every chain ending in a join reported two steps, whatever was
+        underneath it. These are the bound cells, which are keys of `known`
+        and can be followed.
         """
         bindings: list[dict] = [{}]
         for pattern in self.premises:
@@ -431,14 +448,32 @@ class JoinRule(Rule):
                 nxt.extend(self._match(pattern, binding, known))
             if not nxt:
                 return None
-            bindings = nxt[:16]          # a conjunction is not a search
-        conclusion = self.conclusion
-        for name, value in bindings[0].items():
-            conclusion = conclusion.replace(f"?{name}", value)
-        if "?" in conclusion:
-            return None                  # a variable the premises never bound
-        return Content.abstract(
-            conclusion, derivation=f"collecting {', '.join(self.premises)}")
+            bindings = nxt[:32]          # a conjunction is not a search
+        # Return the first conclusion NOT already derived. Returning
+        # bindings[0] unconditionally looks right and is not: once that
+        # cell exists the rule returns it forever and the other bindings
+        # are never reached, so `M(1/5)` and `M(2/5)` would produce
+        # `M(2/5)` and then nothing. Saturation calls this once per round,
+        # so skipping what is known is what lets the bindings enumerate.
+        for binding in bindings:
+            conclusion = self.conclusion
+            for name, value in binding.items():
+                conclusion = conclusion.replace(f"?{name}", value)
+            if "?" in conclusion:
+                continue                 # a variable the premises never bound
+            if conclusion in known:
+                continue
+            used = []
+            for pattern in self.premises:
+                filled = pattern
+                for name, value in binding.items():
+                    filled = filled.replace(f"?{name}", value)
+                used.append(filled)
+            return (Content.abstract(
+                conclusion,
+                derivation=f"collecting {', '.join(self.premises)}"),
+                tuple(used))
+        return None
 
     def confidence(self) -> float:
         # Same reasoning as PythonRule: collecting established facts under

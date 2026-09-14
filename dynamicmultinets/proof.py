@@ -191,11 +191,16 @@ def saturate(
         for rule in joins:
             if note:
                 break
-            out = rule.fires(known)
-            if out is None or out.text in known:
+            fired = rule.fires_from(known)
+            if fired is None:
+                continue
+            out, used = fired
+            if out.text in known:
                 continue
             known[out.text] = out
-            origin[out.text] = (rule.name, rule.premises)
+            # `used` rather than `rule.premises`: the patterns are not cells
+            # and the walk back below cannot follow them.
+            origin[out.text] = (rule.name, used)
             grew = True
         if any(normalize(t) == target_text for t in known):
             break

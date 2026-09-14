@@ -217,6 +217,15 @@ STEPS = [
 ]
 
 
+#: The cited premises as claims, so `STEPS` is self-contained. They were
+#: built inside `main` before, which meant the exported list referenced
+#: keys nobody else could resolve: four of its steps reported PREMISE
+#: MISSING when checked from another file, and read as failures of the
+#: decomposition rather than of how it was packaged.
+ALL_STEPS = [Claim(f"C{i}", cell, (), why, f"cited: {where}")
+             for i, (cell, why, where) in enumerate(CITED)] + STEPS
+
+
 def main() -> None:
     machine = RenMachine(device="cpu")
     for rule in PRIOR:
@@ -228,8 +237,7 @@ def main() -> None:
         machine.assume(cell, f"{why} [{where} the eleven]",
                        source="the paper", standing="previous link")
         keys[f"C{i}" if i == 0 else f"C{i}"] = cell
-    claims = [Claim(f"C{i}", cell, (), why, f"cited: {where}")
-              for i, (cell, why, where) in enumerate(CITED)] + STEPS
+    claims = ALL_STEPS
 
     print("=" * 78)
     print("Proposition 9.9: the first step of the front half")

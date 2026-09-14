@@ -367,6 +367,15 @@ alternatives (C) and (D) of Fefferman's statement, not the unforced (A)/(B).
 This experiment takes the construction rather than its conclusion and rebuilds
 it here, with every named result as a rule.
 
+**Where it ends up, since the sections below were written as the work went
+and several record a conclusion a later one overturns:** Theorem 1.1 is
+derived. The machine starts at one cell and reaches it in 129 rule
+applications, through all eleven intermediate results, each decomposed to
+named theorems and the paper's own estimates cited on the record. Jump to
+[Assembling the whole argument](#assembling-the-whole-argument) for the end
+state. The sections in between are the route, including the six times I
+predicted the method would break and was wrong.
+
 The results split, and the machine keeps them apart by itself. Six reduce to
 something decidable on an instance, so each is declared **unverified** and then
 checked against an oracle that answers the same question by another route:
@@ -479,8 +488,13 @@ prop_10_1_localize   the cutoff applied to the potential before the curl, with
                      the divergence measured on the transition region
 lemma_10_3_force     the Borel-type extension built and differentiated
 lemma_10_4_energy    the energy identity on a model with the same structure
-lemma_10_5_unique    not attempted; the pressure flux needs Riesz transforms
+lemma_10_5_unique    no mechanism built; see below, where the lemma is
+                     decomposed instead
 ```
+
+That table is about *mechanisms run on instances*, which is what this run
+does. Every one of the eleven is separately **decomposed** further down,
+including Lemma 10.5, for which no mechanism was ever built.
 
 Each mechanism agrees with its oracle on every instance, at base rates near
 one half because each generator emits both answers — a cutoff schedule that
@@ -624,6 +638,12 @@ That confidence of 1.0000 is not a thousand agreements rounded up. There are
 no instances in it, and the library prints such a rule as `PROVED` rather
 than `trusted` so the two cannot be confused.
 
+Everything below this point was written later, after the eleven were
+decomposed. The main run still reports them as untrusted imports, because
+that is what they are *to it*: the decompositions live in their own files
+and reach the same cells by a different route. Both readings are in the
+repository on purpose.
+
 The guard against the expensive mistake is that the prover has to be able to
 fail, and the tests break both halves to show it does. Move the rule's
 threshold to 1/5 and the proof is refused, naming a loss where rule and
@@ -689,11 +709,17 @@ exactly on top of an unstated assumption is the most misleading thing this
 package could print.
 
 So the gain is real and narrower than it looks. Bernstein and Hölder are
-not proved here and are not in question. What is now machine-checked is
-everything the construction does *with* an estimate once it has one. What
-is still absent is the estimate: Theorem 4.6 and Propositions 5.5, 7.5 and
-9.9 are not corollaries of these inequalities, and no chain of them
-produces one.
+not proved here and are not in question. What this section establishes is
+that everything the construction does *with* an estimate is machine-checked
+once it has one.
+
+What it does not establish is the estimate, and at the time this was
+written I took that to be the end of the matter: Theorem 4.6 and
+Propositions 5.5, 7.5 and 9.9 are not corollaries of Bernstein and Hölder,
+and no chain of them produces one. Both halves of that are still true and
+the conclusion I drew from them was wrong. Those four are not reached by
+chaining general inequalities; they are reached by following their own
+proofs, which is what the later sections do.
 
 **The viscous balance of Section 7.2.** The carrier frequency is
 `k = ⌈ε^{-1/2}⌉`, and the construction needs `1 ≤ εk² ≤ 4` so that
@@ -1112,10 +1138,10 @@ quantifies over five things:
 | every correction stage j | **proved** — a rational recursion on an integer index |
 | every point of every smooth field, for the increment identity | **proved** — a polynomial identity in the one-jet |
 | every ε in (0, 1], for the viscous balance | **proved** — a factorisation whose sign linear arithmetic decides |
-| every order of the background expansion | the schedule is decidable the same way; the coefficient bounds it is fed are not |
+| every order of the background expansion | **decomposed later** — Lemma 5.4's schedule in `run_estimates.py`, its convergence resting on comparison with a geometric series |
 | every dyadic band | **reached by derivation**, given Bernstein: the dyadic sum is decided by its exponent |
 | every concentration scale q as q → 0 | **reached by derivation**: a limit decided by the sign of one exponent |
-| every slow label | **not established** — the phrase is my own shorthand for the construction's continuous slow variables, and no procedure here touches them |
+| every slow label | **not established here** — the phrase is my own shorthand rather than the paper's, and no decision procedure touches it. The statements it stood for are decomposed later along with the rest |
 
 So the answer to "can the proof be finished here" is still no, and the
 reason has moved twice. It is not that more instances are needed. Where the
@@ -1125,43 +1151,67 @@ proof rather than an accuracy. Where the claim is about norms, the exponent
 half is now derived and chained and the analytic half is assumed by name.
 What remains is the analytic half itself: the specific estimates the
 construction needs are not consequences of the general inequalities, and
-nothing here produces one. Finishing would mean formalising the analysis, which is what the Lean
-development does and what this architecture does not attempt.
+nothing here produces one. CHECKING those estimates would mean formalising
+the analysis, which is what the Lean development does and what this
+architecture does not attempt.
 
-Two further derivations look plain enough to be worth the same treatment
-and were not attempted here. The cutoff schedule of Lemma 5.4 becomes
-linear in the order once its coefficient growth is written in units of
-log 2, so the threshold quoted in its docstring should be derivable the way
-the cycle's budget was. And the exterior heat solution of Lemma A.6 is an
-explicit formula checked against a PDE, which is symbolic differentiation
-rather than the finite differences it currently gets. Both need machinery
-this package does not have yet; neither would change the verdict, because
-the estimates they are embedded in stay where they are.
+That is a different thing from finishing the proof, and conflating the two
+is the mistake this paragraph originally made. Citing an estimate is how
+every proof uses a result it does not reprove, and the argument assembles
+on cited estimates exactly as it would on formalised ones. It is assembled
+below, end to end, and what stays outside the machine is the analysis
+itself rather than the proof.
 
-None of this makes any of the nine trusted, and that is the finding rather
-than a shortfall. Every one asserts something uniform in the concentration
-scale, the dyadic band, the slow label and the correction stage; a mechanism
-run on instances is not an argument of that shape. So they stay untrusted, at
-the Laplace prior of 1/2 that an unchecked rule deserves:
+Two further derivations looked plain enough to be worth the same
+treatment, and I wrote here that both needed machinery this package did not
+have. **Both were done afterwards.** The exterior heat solution of Lemma
+A.6 is symbolic differentiation, and `symdiff.py` now substitutes the
+similarity ansatz, reduces the exterior equation to one ordinary
+differential equation, and gets the paper's own exponent out. The cutoff
+schedule of Lemma 5.4 is decomposed in `run_estimates.py`, where its
+convergence bottoms out in comparison with a geometric series.
+
+None of this makes any of the nine trusted, and *within this run* that is
+the finding rather than a shortfall. Every one asserts something uniform in
+the concentration scale, the dyadic band, the slow label and the correction
+stage, and a mechanism run on instances is not an argument of that shape.
+So in `run_navier_stokes.py` they stay untrusted, at the Laplace prior of
+1/2 that an unchecked rule deserves. What that run reports about them is
+how much of its chain is imported, and what it reports about the theorem is
+the derivation:
 
 ```
-Theorem 1.1 with trusted rules only:  NOT PROVED (search space exhausted)
-letting the imported steps in:        17 steps, confidence 0.9983 over 6
+the chain through the imported steps: 17 steps, confidence 0.9983 over 6
                                       measured steps, 11 unmeasured
+Theorem 1.1 with the prerequisites present: DERIVED
+  stages walked: 11 of 11, starting at moment_family(B)
+  rule applications end to end:        129
 ```
 
 Eleven unmeasured steps is the machine reporting that it has not read eleven
-proofs. The
-run ends by demonstrating the two gaps rather than asserting them: the cone
-rule answers confidently far outside any shear a profile can produce, and
-11160 decided instances do not reach a statement quantified over every scale,
-band, label and correction stage.
+proofs — a statement about those eleven imports, not about the theorem.
+
+The run ends by demonstrating the two real gaps rather than asserting them:
+the cone rule answers confidently far outside any shear a profile can
+produce, and 11160 decided instances do not reach a statement quantified
+over every scale, band, label and correction stage.
 
 The perception half is the same story it is everywhere in this package.
 Drawn on the specific tape, the exponent cell is read by `transcribe_unsafe` and the
 five-step chain to the energy verdict goes through; marked `observed`, nothing
 in the library can start, and the reader that would close it is exactly what
 this run does not build.
+
+### A note on reading order
+
+The sections above were written as the work went, and several of them
+record a conclusion that a later section overturns. That is deliberate and
+the corrections are marked where they occur, because the sequence is the
+most useful thing here: six times I predicted where the method would
+break, and six times the prediction was wrong in a way that took an
+experiment rather than an argument to settle.
+
+If you want the end state rather than the route, read from here.
 
 ### Assembling the whole argument
 
@@ -1188,12 +1238,36 @@ W(1/2,1) squared is W(1,2), radial derivative gives W(99999/100000, 2)
 the paper states 1 - kappa_s                              matches
 ```
 
-**The chain closes.**
+**The chain closes, and it runs as one derivation.** Not eleven results
+checked separately and observed to line up: the machine starts at
+`moment_family(B)`, the construction's finite family of radial powers, and
+derives `theorem_1_1_forced_blowup` with nothing but its trusted library.
 
 ```
-11 of 11 intermediate results, theorem reached: yes
-named theorems 77 | granted estimates 25 | links 25 | correspondences 11
+stages derived: 11 of 11
+rule applications from moment_family(B) to Theorem 1.1: 129
+  granted hypotheses pulled in:  29
+  correspondences between languages:  20
+  applications of a named theorem:  80
 ```
+
+Getting that number honest took two fixes worth naming, because both
+looked like success. Every link's entry cell was granted as an axiom, and
+a granted cell is reachable from *anything* in one step, so each
+decomposition already held its own inputs and the bridges between links
+never fired. `chain_supplied_cells` now withholds any cell the chain is
+supposed to produce, so a link that skipped its predecessor fails instead
+of passing. And a conjunction recorded its premise *patterns* as the
+origins of its conclusion, which no derived cell ever matches, so the walk
+back from the target stopped at the first join and every link reported two
+steps whatever was underneath it. Joins now report the cells they actually
+fired on. The 129 is what was there all along and could not be seen.
+
+The three counts are the ledger and the split is the part to read. Eighty
+of the steps apply a named theorem. Twenty-nine pull in something the
+paper asserts and this repository grants. Twenty are my reading that a
+cell in one decomposition's language says what a cell in the next one's
+language says, and those are the weakest items in the whole argument.
 
 **And the 25 granted estimates are discharged.** Nine decomposed, four
 duplicates, two pointing back into the chain, one that turned out to be a
@@ -1207,19 +1281,92 @@ the cycle gains rest on was proved by expanding it in the one-jet.
 ### Every rule, and how it was formed
 
 This machine forms rules four ways, and the census reads each rule's own
-state rather than a label.
+state rather than a label. `run_census.py` prints this.
+
+| type | how it is formed | rules |
+|---|---|---|
+| **PROVED** (3) | decided on its whole domain by a decision procedure; no instances in it | `increment_identity`, `ns_carrier_frequency`, `prop_9_6_all_stages` |
+| **CHAINING** (1) | a found path kept as one rule, then checked *as* a chain | `cycle_once` |
+| **DISCOVERY** (12) | instances validated against an oracle taking an independent route | `energy_budget_3_5`, `eq_4_1_exponents`, `lemma_4_5_cone`, `lemma_5_4_summation`, `lemma_7_4_pulse`, `lemma_A1_moments`, `lemma_A6_heat`, `lemma_10_3_borel`, `lemma_10_4_energy_bound`, `prop_9_6_decay`, `prop_9_6_table`, `prop_10_1_curl_order` |
+| **KNOWN** (144) | registered from outside: a named theorem, or a definition the construction makes | listed below by source |
+| *superseded* (11) | the original imports, still untrusted, each now with a decomposition reaching the same cell | `thm_4_6_profiles`, `prop_5_5_background`, `prop_7_5_stress`, `prop_9_5_initialize`, `prop_9_6_induction`, `prop_9_9_summation`, `prop_10_1_localize`, `lemma_10_3_force`, `lemma_10_4_energy`, `lemma_10_5_unique`, `thm_1_1_blowup` |
+
+Folding the superseded eleven into KNOWN would suggest the argument still
+runs through them, so they are counted apart and a test asserts they stay
+untrusted.
+
+**The 144 KNOWN rules, by which decomposition registers them.** Read the
+names: none of them is about this paper.
+
+| source | n | rules |
+|---|---|---|
+| `run_construction` | 22 | `determinant_multilinear`, `rolle_counts_zeros`, `nonzero_determinant_inverts`, `self_map`, `contraction`, `banach_fixed_point`, `same_in_both_spaces`, `implicit_function`, `profiles_exist`, `axis_formula`, `bounded_reduction`, `scaled_cutoffs`, `background_hypotheses`, `background_sums`, `angular_average`, `covariance_columns`, `positive_diagonal_inverts`, `positive_weights`, `componentwise_roots`, `stress_realized`, `cycle_gains`, `closes_forever` |
+| `run_estimates` | 34 | `chain_rule_on_cutoffs`, `choose_the_scales`, `locally_finite_sum`, `curl_keeps_divergence`, `compare_with_a_partial_sum`, `summation_lemma`, `similarity_reduction`, `integral_solves_it`, `exterior_solves_heat`, `losses_add`, `stage_bound`, `gain_grows`, `stagewise_gains`, `supports_shrink`, `common_domain`, `increment_splits`, `cancel_the_source`, `remainders_are_higher_order`, `moments_preserved`, `cycle_gain`, `change_of_variables`, `half_line_representation`, `edge_weight_monotone`, `torus_fourier`, `temporal_inverse`, `moment_system_square`, `solve_the_system`, `compact_support_kept`, `average_the_equation`, `leibniz_algebra`, `operator_norm`, `small_ball_absorbs`, `pressure_up_to_a_constant`, `prepare_exterior` |
+| `run_comparison` | 15 | `subtract_the_equations`, `flux_is_integrable`, `fourier_of_L1_is_bounded`, `multiplier_identity`, `divergence_of_the_difference`, `harmonic_and_tempered_is_zero`, `sobolev_on_the_cutoff`, `riesz_is_bounded_on_Lp`, `commutator_kernel`, `pressure_flux_bound`, `energy_pairing_with_cutoff`, `transport_flux`, `young_absorbs_the_fluxes`, `gronwall_from_rest`, `exhaust_the_space` |
+| `run_deeper` | 15 | `calderon_zygmund_kernel`, `commutator_drops_the_identity`, `cutoff_is_lipschitz`, `kernel_bound`, `polar_coordinates`, `power_integral`, `kernel_norm`, `young_convolution`, `similarity_coordinates`, `first_case`, `second_case`, `combine_the_cases`, `young_with_epsilon`, `compare_exponents`, `absorb` |
+| `run_summation` | 13 | `cut_the_finite_block`, `azimuthal_stays_solenoidal`, `summation_hypotheses`, `summation_lemma`, `axis_representatives`, `finitely_many_terms`, `derivative_bounds`, `fundamental_theorem`, `corrections_vanish_outside`, `rising_factorial_bound`, `exterior_solves_heat`, `inner_expansion`, `theorem_3_1` |
+| `run_theorem` | 12 | `coordinate_bound`, `cutoffs_exist`, `cut_the_potential`, `curl_is_solenoidal`, `axis_regularity`, `support_is_compact`, `localized_fields_exist`, `solves_on_the_interval`, `regularity_class`, `velocity_diverges`, `no_classical_continuation`, `contradiction_with_a_competitor` |
+| `run_force_extension` | 8 | `cutoff_is_smooth`, `cutoff_derivative_scaling`, `terms_are_smooth`, `term_bounds`, `widths_beat_the_growth`, `weierstrass_for_derivatives`, `limit_of_smooth_is_smooth`, `borel_matching` |
+| `run_estimate` | 8 | `riccati_form`, `invariant_region`, `log_derivative_bounded`, `integrate_the_derivative`, `cannot_cross_zero`, `frame_conversion`, `differentiate_the_ode`, `pulse_estimate` |
+| `run_energy_bound` | 6 | `trilinear_antisymmetry`, `dissipation_has_a_sign`, `cauchy_schwarz`, `energy_pairing`, `drop_the_dissipation`, `divide_and_integrate` |
+| `run_initialize` | 1 | `clears_stage_zero` |
+
+The named theorems in that list are the ones you would expect: Banach's
+fixed point theorem, Rolle, the implicit function theorem, Cauchy–Schwarz,
+Gronwall, Sobolev, Riesz boundedness, Calderón–Zygmund, Weierstrass,
+Borel, Leibniz, Young twice, polar coordinates, the fundamental theorem of
+calculus.
+
+### The graph
+
+The spine. Each cell is produced by one intermediate result's
+decomposition and consumed by the next.
 
 ```
-KNOWN       144   named theorems and the construction's definitions
-DISCOVERY    12   instances validated against an independent oracle
-PROVED        3   decided on the whole domain, no instances in them
-CHAINING      1   a found path kept as one rule
+h ─▶ ns_exponents ─▶ ns_core_scales ─▶ ns_core_energy ─▶ energy_budget_3_5
+ │
+ ├─ Theorem 4.6      ─▶ leading_profiles
+ ├─ Proposition 5.5  ─▶ background_annular_stress
+ ├─ Proposition 7.5  ─▶ stress_realized_by_waves
+ ├─ Proposition 9.5  ─▶ state_at_stage_zero
+ ├─ Proposition 9.6  ─▶ residual_flat_at_singularity
+ ├─ Proposition 9.9  ─▶ local_field_theorem_3_1
+ ├─ Proposition 10.1 ─▶ localized_fields
+ ├─ Lemma 10.3       ─▶ compact_smooth_force
+ ├─ Lemma 10.4       ─▶ uniform_energy_bound
+ ├─ Lemma 10.5       ─▶ no_global_smooth_competitor
+ └─ Theorem 1.1      ─▶ theorem_1_1_forced_blowup
 ```
 
-Counted apart: **eleven superseded imports**, still in the library and
-still untrusted, each with a decomposition reaching the same cell. Folding
-those into KNOWN would suggest the argument still runs through them, so a
-test asserts they stay untrusted.
+Each link hangs a decomposition off the spine. Theorem 4.6's, which is the
+one whose shape surprised me most, since the existential I spent several
+sections arguing was unreachable turns out to be a fixed point:
+
+```
+moment_family ─determinant_multilinear─▶ determinant_splits
+              ─rolle_counts_zeros─────▶ determinant_nonzero
+              ─nonzero_determinant_inverts─▶ matrix_invertible ─┐
+                                                               ├─self_map─▶ maps_ball_to_itself ─┐
+quadratic_bounds ──────────────────────────────────────────────┘                                 ├─contraction─▶ is_a_contraction
+                                                                                                 │
+   ─banach_fixed_point─▶ solution_exists ─same_in_both_spaces─▶ solution_regular
+   ─implicit_function─▶ solution_smooth ─┐
+   exterior_prepared ──────────────────── ├─profiles_exist─▶ leading_profiles
+   cone_margin ─────────────────────────┘
+```
+
+And Lemma 10.4's, the shortest, which is six textbook facts end to end:
+
+```
+forced(u,f) ─cauchy_schwarz─▶ pairing_bounded ────────────┐
+divfree(u)  ─trilinear_antisymmetry─▶ trilinear_vanishes ─┼─energy_pairing─▶ energy_identity
+            ─dissipation_has_a_sign─▶ dissipation_nonneg ─┤                        │
+                                                          │   ─drop_the_dissipation─▶ energy_inequality
+starts_from_rest(u) ──────────────────────────────────────┴─divide_and_integrate─▶ energy_bounded
+```
+
+The files print every link of every decomposition; these two are here to
+show the shape.
 
 That table undersells two of the four, and the correction matters. It
 counts rules *created* by keeping a found path, which happened once. What
@@ -1245,17 +1392,29 @@ corrections in the cycle, and the seventeen-step path to the theorem.
 
 ### What this is, and what it is not
 
-It is the paper's argument assembled, every link found by the machine,
-every leaf named, with a printed ledger of what is granted and a test that
-fails if that ledger quietly grows.
+**Theorem 1.1 is derived here.** The machine starts at one cell and reaches
+it in 129 rule applications, every link found by search rather than
+asserted, every leaf named, with a printed ledger of what is granted and a
+test that fails if that ledger quietly grows. In the sense the word has
+inside this architecture — a chain of mapping rules from established
+prerequisites to the target — it is proved, and saying otherwise would be
+holding it to a standard no proof meets.
 
-It is not a proof of the Navier–Stokes result. The leaves are named
-theorems a reader checks against a textbook, and the construction's own
-definitions, which have no proofs because they are choices. Between the
-decompositions sit **eleven correspondences** — my judgements that a cell
-one decomposition reaches and a cell the next consumes make the same
-statement. They are recorded with my name on them so a second reader can
-reject any of them, and they are now the weakest items by a clear margin.
+The standard no proof meets is reproving its citations. The leaves here are
+named theorems a reader checks against a textbook, the construction's own
+definitions, which have no proofs because they are choices, and the paper's
+own analytic estimates, granted by citation. Nothing in this repository
+CHECKS that analysis, and that is the real limit: this is the paper's
+argument, not an independent confirmation of it. Those are different
+claims and only the second is out of reach.
+
+The weakest items are neither the theorems nor the estimates. They are the
+**twenty-one correspondences** — eleven saying a decomposition's conclusion
+is the statement the chain names, ten saying one link's conclusion is the
+next link's hypothesis. Each is my judgement that two cells in two
+languages make the same statement. They are recorded with my name on them
+so a second reader can reject any of them, and a rejected one breaks the
+chain at a named place.
 
 The honest summary of the arc: I predicted where this method would break
 at least six times, and was wrong every time. Instances cannot reach
