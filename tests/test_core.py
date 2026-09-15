@@ -1162,6 +1162,13 @@ def test_every_rule_is_classified_by_how_it_was_formed():
         # rule that came out with an empty `assumes` would be claiming the
         # derivation was unconditional, which none of them is.
         assert rule.assumes, name
+        # And it reports what the derivation was worth rather than the
+        # prior for a rule nothing has checked. A discharged rule used to
+        # print `DERIVED` beside a confidence of 0.50, which said nothing
+        # is known about a rule that had just been derived.
+        assert rule.derived_confidence is not None, name
+        assert rule.confidence() == rule.derived_confidence
+        assert rule.measured(), name
 
 
 def test_discovery_works_in_a_norm_space():

@@ -165,6 +165,14 @@ class Rule(ABC):
         #: library already holds, which is worth exactly what those rules
         #: are worth -- and `assumes` carries what they lean on.
         self.derived = ""
+        #: The confidence the derivation carried, when there was one. A
+        #: discharged rule used to keep reporting the Laplace prior of 1/2
+        #: while being marked trusted, which said "nothing is known about
+        #: this" about a rule that had just been derived from a chain of
+        #: exact ones. What is known about it is exactly what the chain
+        #: was worth, so `discharge` records that here and `confidence`
+        #: returns it.
+        self.derived_confidence: float | None = None
         # Classical facts this rule leans on but does not establish. Empty
         # for nearly everything here; the norm calculus in `normcalc` is
         # where it matters, because an exponent computed exactly on top of
@@ -209,7 +217,15 @@ class Rule(ABC):
 
     def confidence(self) -> float:
         """Laplace-smoothed accuracy: an unverified rule is not 100% trusted,
-        it is unknown, and a single lucky check is not proof."""
+        it is unknown, and a single lucky check is not proof.
+
+        A DERIVED rule is the exception, and it reports what its derivation
+        was worth. That is not a softer standard: the chain's own
+        confidence already multiplies every step, so a derivation through
+        an unmeasured rule comes out low rather than high.
+        """
+        if self.derived_confidence is not None:
+            return self.derived_confidence
         return (self.stats.n_correct + 1.0) / (self.stats.n_checked + 2.0)
 
     def measured(self) -> bool:
@@ -224,7 +240,8 @@ class Rule(ABC):
         wrong, which is why `Proof` counts the unmeasured steps separately
         instead of only handing back the product.
         """
-        return self.stats.n_checked > 0 or self.confidence() >= 1.0
+        return (self.stats.n_checked > 0 or self.confidence() >= 1.0
+                or self.derived_confidence is not None)
 
     # -- persistence ---------------------------------------------------------
     def to_manifest(self) -> dict[str, Any]:

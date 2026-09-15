@@ -200,6 +200,7 @@ def build():
             here = machine.library.get(rule.name)
             here.trusted, here.derived = True, rule.derived
             here.assumes = rule.assumes
+            here.derived_confidence = rule.derived_confidence
     return machine
 
 

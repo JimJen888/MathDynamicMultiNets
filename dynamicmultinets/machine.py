@@ -595,6 +595,11 @@ class RenMachine:
                 if a not in leans_on:
                     leans_on.append(a)
         rule.trusted = True
+        # What the chain was worth, rather than the prior for a rule
+        # nothing has checked. `Proof.confidence` is already the product
+        # over the steps, so a derivation through an unmeasured rule
+        # reports a low number here rather than inheriting a clean one.
+        rule.derived_confidence = p.confidence
         rule.derived = statement or (
             f"derived in {p.length} steps: {p.start} => {p.target}")
         rule.assumes = tuple(leans_on)
