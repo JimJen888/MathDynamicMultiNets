@@ -784,11 +784,17 @@ def report_the_two_gaps(machine: RenMachine) -> None:
     print("  instances the construction quantifies over:  every q as q -> 0,\n"
           "     every dyadic band, every slow label, every correction stage j,\n"
           "     every order of the background expansion")
-    print("     No number of instances reaches one of those, and the estimates\n"
-          "     of Theorem 4.6, Propositions 5.5, 7.5, 9.6 and 9.9 and Section\n"
-          "     10 were never in reach of an instance to begin with. They are\n"
-          "     in the library as untrusted steps, which is the honest place\n"
-          "     for a result this machine has imported and cannot check.")
+    print("     No number of THESE instances reaches one of those. The\n"
+          "     instances above are numerical samples of the construction's\n"
+          "     objects, and sampling an object cannot settle a claim about\n"
+          "     every object. That is a limit on this instance space rather\n"
+          "     than on the method: `run_norm_discovery.py` samples written-\n"
+          "     down ESTIMATES instead, where every instance is itself a\n"
+          "     uniform statement. The estimates of Theorem 4.6, Propositions\n"
+          "     5.5, 7.5, 9.6 and 9.9 and Section 10 are not reached either\n"
+          "     way, and they sit in this library as untrusted steps, which\n"
+          "     is the honest place for a result this machine has imported\n"
+          "     and cannot check.")
 
 
 def report_the_theorem_with_prerequisites() -> None:
@@ -917,23 +923,27 @@ def main() -> None:
     report_the_theorem_with_prerequisites()
 
     print("""
---- and what was not ---
-  This run did not prove that the Navier-Stokes equations break down. One
-  step of the construction IS proved here, and naming it precisely is the
-  point: the induction of Proposition 9.6 closes at every stage, for every
-  radial derivative loss up to a budget the machine derived rather than
-  imported. That is a decision procedure over rational arithmetic, it is
-  the only quantifier in the construction that lives in a decidable
-  fragment, and it leaves every estimate the induction is built from
-  exactly where it was.
+--- what this run does, and what it leaves to other files ---
+  The theorem is derived, and the section above is where that is reported
+  rather than done: `run_complete.py` assembles the chain and this run
+  imports the result. What THIS file establishes is narrower and is worth
+  separating from it.
+
+  One step is PROVED here, in the strongest sense the package has. The
+  induction of Proposition 9.6 closes at every stage, for every radial
+  derivative loss up to a budget the machine derived rather than imported.
+  That is a decision procedure over rational arithmetic, it is the only
+  quantifier in the construction that lives in a decidable fragment, and
+  it leaves every estimate the induction is built from exactly where it
+  was.
 
   The rest was rebuilt as rules and checked against computations that
-  answer the same question another way, which is
-  worth exactly what that is worth: the cone test agrees with the wave
-  amplitudes it is supposed to predict, the exterior field really does solve
-  the heat equation, the pulse really does turn over inside its slot, the
-  moment matrices really are invertible, the decay recursion really does run
-  away, and the energy budget really does close for h < 1/6.
+  answer the same question another way, which is worth exactly what that
+  is worth: the cone test agrees with the wave amplitudes it is supposed
+  to predict, the exterior field really does solve the heat equation, the
+  pulse really does turn over inside its slot, the moment matrices really
+  are invertible, the decay recursion really does run away, and the energy
+  budget really does close for h < 1/6.
 
   Four of those checks have a stated blind spot, printed above and set out
   in the module: the pulse rule and its oracle share the model they disagree
@@ -942,22 +952,33 @@ def main() -> None:
   than the estimate that produces the gain, and the core exponents are
   definitions here rather than measurements of a field.
 
-  The nine steps that carry the construction's weight had their methods
-  carried out rather than quoted, and the run says for each one what that
-  reached and what it did not. Seven of the nine have a mechanism here that
-  was built and measured. Two do not: the comparison argument of Lemma 10.5
-  turns on a pressure flux controlled by Riesz transforms on the whole
-  space, and Theorem 1.1 is the conjunction of everything, uniformly.
+  The eleven steps that carry the construction's weight are imports IN
+  THIS LIBRARY and stay untrusted here, because this file installs none of
+  their prerequisites. That is a fact about this machine. Each has since
+  been decomposed to named theorems and the paper's cited estimates, each
+  is derived from the link before it in `run_complete.py`, and each is
+  discharged there by `machine.discharge`, which refuses any chain
+  containing an untrusted rule.
 
-  Not one of the nine is trusted afterwards, and that is the finding rather
-  than a shortfall. Every one of them asserts something uniform in the
-  concentration scale, the dyadic band, the slow label and the correction
-  stage. A mechanism executed on instances is not an argument of that shape,
-  and running more instances does not change its shape. The
-  theorem also concerns the FORCED equations: it settles alternatives (C) and
-  (D) of Fefferman's statement. The unforced question, (A) and (B), is a
-  different one, and the force here cannot be dropped -- by the energy
-  identity a zero force would give the zero solution.""")
+  What no file here does is CHECK the paper's analysis. The estimates of
+  Theorem 4.6 and Propositions 5.5, 7.5 and 9.9 are granted by citation,
+  the ledger prints how many, and that is the real limit: this is the
+  paper's argument assembled, not an independent confirmation of it.
+
+  One claim this run used to make and should not have: that a mechanism
+  executed on instances can never reach a uniform statement, so norm
+  estimates are out of reach in principle. That is true of sampling the
+  underlying FUNCTIONS and false as a general claim. A band estimate can
+  be written down as a cell, and `run_norm_discovery.py` samples such
+  cells and checks them against an oracle that integrates a real function
+  -- every instance there is itself a uniform statement. The limit is the
+  choice of instance space, not the method.
+
+  Finally, the theorem concerns the FORCED equations: it settles
+  alternatives (C) and (D) of Fefferman's statement. The unforced
+  question, (A) and (B), is a different one, and the force here cannot be
+  dropped -- by the energy identity a zero force would give the zero
+  solution.""")
 
 
 if __name__ == "__main__":
