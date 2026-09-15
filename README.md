@@ -41,11 +41,12 @@ end, same `fa - fb` fusion; the head goes from `num_classes` logits to
 ```bash
 conda env create -f environment.yml      # python 3.10, numpy, torch+CUDA, pytest
 conda activate dynamicmultinet
-python -m pytest tests/ -q               # 135 tests, ~80 s
+python -m pytest tests/ -q               # 139 tests, ~85 s
 
 python examples/run_navier_stokes.py     # experiment 1: the construction as rules
 python examples/run_complete.py          #   the assembled chain to the theorem
 python examples/run_census.py            #   every rule, how it was formed
+python examples/run_norm_discovery.py    #   discovery on norm statements
 
 #   the eleven intermediate results, decomposed one at a time
 python examples/run_construction.py      #   Thm 4.6, Props 5.5, 7.5, 9.6
@@ -574,6 +575,37 @@ rest — right for a rule that reads pixels or integrates a field, and wrong
 for a rule whose content is a statement about every case. That is why no
 number of agreeing instances trusts an imported step. What eventually does
 is a derivation: see [DERIVED](#every-rule-and-how-it-was-formed) below.
+
+**One correction to that, which took a reader to point out.** "Discovery
+works on instances, so it cannot reach a uniform claim" is a fact about a
+choice of instance space stated as a fact about discovery. Rule formation
+by observation applies wherever the concepts can be written down, and a
+function space is somewhere concepts can be written down. `normcalc.py`
+already writes a band estimate as a cell, and that cell is not a number —
+it is a uniform statement about every function in a band.
+`run_norm_discovery.py` samples those cells and checks them:
+
+```
+rule                        n  distinct  accuracy  trusted
+bernstein_uniform         300       204    1.0000  yes
+bernstein_to_energy       300       145    1.0000  yes
+bernstein_no_dimension    300       204    0.5367  MUTANT
+```
+
+The oracle is what makes it a check rather than a restatement. The rule
+does exponent arithmetic on a written-down estimate; the oracle builds the
+bump concentrated at width 1/M that saturates the inequality, integrates
+its norms on a grid at four frequencies, and fits the exponent as a slope
+in log M. Quadrature on an actual function and symbolic bookkeeping about a
+norm are not the same route. The mutant is the guard: it charges 1/p powers
+of the frequency where Bernstein charges d/p, which is exactly right on the
+line and wrong in the plane, so a reader who tested only in one dimension
+would see nothing.
+
+What this does not do is make Bernstein's inequality true. The oracle
+measures the exponent of an inequality already believed to hold, which is
+the split `normcalc` draws throughout. What changes is the scope of the
+method, not the standing of the paper's estimates.
 
 Three of the paper's derivations are not estimates at all, and all three
 are plain enough to carry out here rather than import. One is an identity,

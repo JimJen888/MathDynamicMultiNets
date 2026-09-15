@@ -365,3 +365,78 @@ def oracle_classes(name: str) -> list[str]:
 
 def oracle_kind(name: str) -> str:
     return ORACLES[name].kind
+
+
+@oracle(
+    "band_exponent_by_quadrature",
+    doc="The frequency exponent of a band estimate, measured rather than "
+        "computed. Builds a concrete bump concentrated at width 1/M, "
+        "integrates its norms numerically at several M, and fits the slope "
+        "in log M. This is a genuinely independent route to the same "
+        "answer: the rule does exponent arithmetic on a written-down "
+        "estimate, the oracle integrates a function on a grid and reads the "
+        "exponent off the measurement.",
+    kind="measured")
+def oracle_band_exponent_by_quadrature(ex: Example) -> Content | None:
+    from fractions import Fraction
+
+    from .normcalc import est
+
+    d = int(ex.meta["d"])
+    dv = int(ex.meta["dv"])
+    ip = Fraction(ex.meta["ip"])
+    ip_to = Fraction(ex.meta["ip_to"])
+    fr = Fraction(ex.meta["fr"])
+    sc = Fraction(ex.meta["sc"])
+
+    # u_M(x) = phi(M x), the extremiser for a band estimate: a bump whose
+    # width is the reciprocal of its frequency. Its L^p norms are what
+    # carry the exponent, and nothing about them is assumed here.
+    span, points = 6.0, 4097
+    x = np.linspace(-span, span, points)
+    h = x[1] - x[0]
+    phi = np.exp(-x ** 2)
+
+    def norm(values: np.ndarray, index: Fraction) -> float:
+        """||v||_{L^p} in ONE dimension, with 1/p = index. The d-dimensional
+        bump is the product of d copies, so its norm is the d-th power of
+        this and the exponent picks up the factor d on its own."""
+        if index == 0:                       # the sup norm
+            return float(np.max(np.abs(values)))
+        p = 1.0 / float(index)
+        return float((np.sum(np.abs(values) ** p) * h) ** (1.0 / p))
+
+    ratios, scales = [], [8.0, 16.0, 32.0, 64.0]
+    for M in scales:
+        # phi(Mx) sampled on the same grid, and its dv-th derivative taken
+        # by finite differences rather than by the chain rule, so the M^dv
+        # is measured too.
+        u = np.exp(-(M * x) ** 2)
+        for _ in range(dv):
+            u = np.gradient(u, h)
+        lo, hi = norm(u, ip), norm(u, ip_to)
+        if lo <= 0 or hi <= 0:
+            return None
+        ratios.append(math.log(hi) - math.log(lo))
+    logs = [math.log(M) for M in scales]
+    mean_l = sum(logs) / len(logs)
+    mean_r = sum(ratios) / len(ratios)
+    cov = sum((a - mean_l) * (b - mean_r) for a, b in zip(logs, ratios))
+    var = sum((a - mean_l) ** 2 for a in logs)
+    if var == 0:
+        return None
+    slope = cov / var                    # measured, in one dimension
+
+    # d independent factors, so the measured one-dimensional exponent is
+    # multiplied by d. The derivative count does NOT appear: it multiplies
+    # both norms in the ratio by the same M^dv and cancels. Subtracting a
+    # term for it was the first version of this line and it was wrong,
+    # which the measurement itself caught.
+    measured = slope * d
+    snapped = Fraction(round(measured * 4), 4)
+    if abs(float(snapped) - measured) > 0.05:
+        # A measurement that does not land near an exact rational is not
+        # labelled. Snapping anything at all would let the snap supply the
+        # answer the oracle is supposed to supply.
+        return None
+    return Content.abstract(est(d=d, dv=dv, ip=ip_to, fr=fr + snapped, sc=sc))

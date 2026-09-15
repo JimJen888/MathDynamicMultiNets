@@ -1164,6 +1164,50 @@ def test_every_rule_is_classified_by_how_it_was_formed():
         assert rule.assumes, name
 
 
+def test_discovery_works_in_a_norm_space():
+    """Instances that are statements about function spaces, not numbers.
+
+    The package spent a long time saying discovery cannot reach a uniform
+    claim. That was a fact about a choice of instance space stated as a
+    fact about discovery: sampling FUNCTIONS cannot settle a claim about
+    all of them, but a band estimate is itself a written-down uniform
+    statement, and sampling ESTIMATES is a different thing.
+
+    The oracle is what makes it a check rather than a restatement. The
+    rule does exponent arithmetic on a cell; the oracle builds the bump
+    that saturates the inequality, integrates its norms at four
+    frequencies and fits the exponent as a slope. The mutant at the end is
+    the guard: it drops the dimension factor, which is invisible on the
+    line and wrong in the plane.
+    """
+    from dynamicmultinets.normcalc import install_norm_rules
+
+    m = RenMachine(device="cpu")
+    install_norm_rules(m.library)
+    m.generate_data("norm_band_estimates", 200, seed=11, name="nb", ip_to="0")
+    good = m.verify("bernstein_uniform", "nb",
+                    "band_exponent_by_quadrature", threshold=0.99)
+    assert good.accuracy == 1.0
+    # Charged per distinct estimate, and the set has to hold many of them
+    # or the check is one question asked repeatedly.
+    assert good.n_distinct > 100
+
+    import importlib.util
+    from pathlib import Path
+
+    path = (Path(__file__).resolve().parents[1] / "examples"
+            / "run_norm_discovery.py")
+    spec = importlib.util.spec_from_file_location("normdisc", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    m.library.add(module.mutant())
+    bad = m.verify("bernstein_no_dimension", "nb",
+                   "band_exponent_by_quadrature", threshold=0.99)
+    assert bad.accuracy < 0.7, bad.accuracy
+    assert bad.counterexamples
+
+
 def test_a_derivation_cannot_launder_trust():
     """`discharge` refuses a chain containing an untrusted rule.
 

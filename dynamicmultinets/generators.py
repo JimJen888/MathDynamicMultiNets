@@ -415,3 +415,50 @@ def _triangle_scenes(n: int, rng: np.random.Generator,
                  "base_angle": base_angle, "annotated": True}
         out.append(Example(inp=Content.specific_sketch(scene, caption=f"triangle{i}")))
     return out
+
+
+@generator(
+    "norm_band_estimates",
+    doc="Instances that are STATEMENTS about function space norms, not "
+        "numbers. Each is a band estimate ||grad^dv P_M u||_{L^p} <= C M^fr "
+        "q^sc together with an integrability index to move it to, which is "
+        "the question `bernstein_uniform` and its siblings answer. The "
+        "point of the generator is that the instance space is a space of "
+        "written-down estimates: discovery applies wherever concepts can be "
+        "written down, and a norm space is one of those.",
+    params={"max_dim": "largest spatial dimension to draw",
+            "max_derivatives": "largest derivative count to draw",
+            "ip_to": "the integrability index the rule under test moves to, "
+                     "as a string like '0' or '1/2'; instances are drawn "
+                     "only where that rule's own guard admits them"})
+def gen_norm_band_estimates(n: int, rng, max_dim: int = 2,
+                            max_derivatives: int = 2,
+                            ip_to: str = "0") -> list[Example]:
+    from fractions import Fraction
+
+    from .normcalc import est
+
+    # Quarters, so the forced exponent d*(ip - ip_to) lands on a multiple
+    # of 1/4 for d <= 2 and the oracle's measured slope can be snapped to
+    # an exact rational without the snap doing the work.
+    target = Fraction(ip_to)
+    # Only indices the rule's guard admits: `bernstein_uniform` requires
+    # 1/p > 0 and `bernstein_to_energy` requires 1/p > 1/2, so drawing
+    # below the target would fill the set with instances the rule declines
+    # and measure nothing at all.
+    grid = [Fraction(k, 4) for k in range(0, 5) if Fraction(k, 4) > target]
+    if not grid:
+        raise ValueError(f"no integrability index above {target}")
+    out: list[Example] = []
+    for _ in range(n):
+        d = int(rng.integers(1, max_dim + 1))
+        dv = int(rng.integers(0, max_derivatives + 1))
+        ip = grid[int(rng.integers(0, len(grid)))]
+        fr = Fraction(int(rng.integers(-4, 1)))
+        sc = Fraction(int(rng.integers(0, 3)))
+        cell = est(d=d, dv=dv, ip=ip, fr=fr, sc=sc)
+        out.append(Example(
+            inp=Content.abstract(cell),
+            meta={"d": d, "dv": dv, "ip": ip, "ip_to": target,
+                  "fr": fr, "sc": sc}))
+    return out
