@@ -1215,6 +1215,140 @@ def test_discovery_works_in_a_norm_space():
     assert bad.counterexamples
 
 
+def test_a_learned_rule_on_norm_statements_finds_cases_not_the_law():
+    """A network reads a band estimate and says what it costs.
+
+    Symbols and text layouts are the same content in two carriers, and the
+    codec renders between them, so a learned rule can work on a
+    function-space concept with no new machinery. What it learns is the
+    question.
+
+    Trained on one and two dimensions, tested on three. Bernstein charges
+    d * (1/p); a network that found the pattern answers a new dimension.
+    This one does not, and scoring it only on dimensions it trained on
+    would report a high number and tell you nothing. That gap is the
+    assertion, because it is the thing worth protecting: if a later change
+    made the two scores close, either the network got better or the test
+    stopped testing, and both need looking at.
+    """
+    pytest.importorskip("torch")
+    import importlib.util
+    from pathlib import Path
+
+    path = (Path(__file__).resolve().parents[1] / "examples"
+            / "run_norm_discovery.py")
+    spec = importlib.util.spec_from_file_location("normdisc", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    m = RenMachine(device="cpu")
+    # Enough budget that a low score on the seen dimensions would mean
+    # undertraining rather than the thing being tested. At 600 examples it
+    # reaches 0.57 on those, and a contrast drawn against a model that has
+    # not learned the easy case is not a contrast.
+    _report, seen, unseen, misses = module.learn_the_exponent(
+        m, epochs=18, n_train=1200, n_test=150)
+
+    assert seen > 0.90, seen
+    assert unseen < 0.30, unseen
+    assert seen - unseen > 0.50, (seen, unseen)
+    assert misses
+
+    # And the division of labour: the network is read for a CANDIDATE and
+    # computation decides it. A rule a decision procedure settles exactly
+    # should not be executed by a network at all, so what is checked here
+    # is that the wrong constant is refused and the forced one admitted.
+    c, guessed, forced = module.proposal_from_the_network(m)
+    assert c == 2, c                      # it generalised the plane
+    assert not guessed.admitted
+    assert "2ip" in guessed.proposed and "3ip" in guessed.forced
+    assert forced.admitted
+
+
+def test_a_contradicted_rule_loses_its_standing():
+    """Verification withdraws trust, not only grants it.
+
+    It used to be one-directional: trust when a rule cleared its
+    threshold, nothing when it failed. That reads as conservative and is
+    the opposite, because most prior knowledge here is declared exact and
+    is therefore trusted ON CREATION. A rule born trusted kept that
+    standing after answering wrongly, so the one event that should cost a
+    rule everything cost it nothing.
+    """
+    from fractions import Fraction
+
+    from dynamicmultinets.normcalc import (BERNSTEIN, _estimate_rule,
+                                           install_norm_rules)
+
+    m = RenMachine(device="cpu")
+    install_norm_rules(m.library)
+
+    def shift(f):
+        f["fr"] = f["fr"] + (f["ip"] - Fraction(0))   # missing the * d
+        f["ip"] = Fraction(0)
+        return f
+
+    mutant = _estimate_rule("bernstein_no_dimension", "mutant",
+                            "est(ip,fr)->est(0,fr+ip)", (BERNSTEIN,),
+                            lambda f: f["ip"] > 0, shift)
+    m.library.add(mutant)
+    assert mutant.trusted and mutant.exact      # born both, like prior knowledge
+
+    m.generate_data("norm_band_estimates", 200, seed=11, name="mut", ip_to="0")
+    report = m.verify("bernstein_no_dimension", "mut",
+                      "band_exponent_by_quadrature", threshold=0.99)
+
+    assert report.refuted and report.lost_trust
+    assert report.n_contradicted > 0
+    assert not mutant.trusted
+    assert not mutant.exact                     # it has just been wrong
+    assert mutant.refuted and "band_exponent_by_quadrature" in mutant.refuted
+    assert "TRUST WITHDRAWN" in report.summary()
+
+    # The control keeps its standing on the same set.
+    m.verify("bernstein_uniform", "mut", "band_exponent_by_quadrature",
+             threshold=0.99)
+    assert m.library.get("bernstein_uniform").trusted
+
+
+def test_declining_a_check_is_not_being_contradicted():
+    """A correct rule with a narrow guard keeps its standing.
+
+    This is the distinction that makes withdrawal safe to have at all.
+    `_check` scores a declined instance as wrong, which is right for
+    accuracy and would be badly wrong as grounds for stripping a rule: a
+    sound rule checked on a set it mostly declines would score near zero.
+    So only cases where the rule COMMITTED to an answer count.
+    """
+    from fractions import Fraction
+
+    from dynamicmultinets.normcalc import (BERNSTEIN, _estimate_rule,
+                                           band_shift, install_norm_rules)
+
+    m = RenMachine(device="cpu")
+    install_norm_rules(m.library)
+
+    def shift(f):
+        f["fr"] = f["fr"] + band_shift(f["d"], f["ip"], Fraction(0))
+        f["ip"] = Fraction(0)
+        return f
+
+    narrow = _estimate_rule("bernstein_on_the_line", "correct, only in d=1",
+                            "est(d=1,ip,fr)->est(0,fr+ip)", (BERNSTEIN,),
+                            lambda f: f["ip"] > 0 and f["d"] == 1, shift)
+    m.library.add(narrow)
+    m.generate_data("norm_band_estimates", 200, seed=11, name="mix",
+                    ip_to="0", min_dim=1, max_dim=2)
+    report = m.verify("bernstein_on_the_line", "mix",
+                      "band_exponent_by_quadrature", threshold=0.99)
+
+    assert report.accuracy < 0.99            # it misses most of the set
+    assert report.n_contradicted == 0        # but never by answering wrongly
+    assert not report.refuted and not report.lost_trust
+    assert narrow.trusted and narrow.exact
+    assert "Standing is unchanged" in report.summary()
+
+
 def test_a_derivation_cannot_launder_trust():
     """`discharge` refuses a chain containing an untrusted rule.
 

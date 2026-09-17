@@ -41,7 +41,7 @@ end, same `fa - fb` fusion; the head goes from `num_classes` logits to
 ```bash
 conda env create -f environment.yml      # python 3.10, numpy, torch+CUDA, pytest
 conda activate dynamicmultinet
-python -m pytest tests/ -q               # 139 tests, ~85 s
+python -m pytest tests/ -q               # 142 tests, ~125 s
 
 python examples/run_navier_stokes.py     # experiment 1: the construction as rules
 python examples/run_complete.py          #   the assembled chain to the theorem
@@ -606,6 +606,54 @@ What this does not do is make Bernstein's inequality true. The oracle
 measures the exponent of an inequality already believed to hold, which is
 the split `normcalc` draws throughout. What changes is the scope of the
 method, not the standing of the paper's estimates.
+
+**And a network can be pointed at the same statements.** Symbols on the
+abstract tape and a text layout on the specific tape are one statement in
+two carriers, and the codec renders between them implicitly, so a learned
+rule works on a function-space concept with no new machinery. The same run
+trains one to read a rendered band estimate and emit the exponent it
+acquires. The test set is the experiment: it trains on one and two
+dimensions and is tested on three.
+
+```
+accuracy on dimensions 1 and 2, which it trained on: 0.9833
+accuracy on dimension 3, which it never saw:         0.0300
+  'est(d=3,dv=0,ip=1,fr=-1,sc=1)' -> '1'   (want '2')
+  'est(d=3,dv=2,ip=1/4,fr=0,sc=1)' -> '1/2' (want '3/4')
+```
+
+It found the cases, not the law. In three dimensions it answers with the
+two-dimensional shift, which is a lookup table behaving as a lookup table
+does off the end of its keys. The symbolic rule has the factor `d` in it
+and is right in every dimension without being shown one.
+
+That is not an argument against learned rules, it is an argument about
+which job they are for. **A rule whose correctness can be derived or
+computed should not be executed by a network in practice.** The decision
+procedure is exact, total and cheap, and the network is none of those, so
+asking one to compute Bernstein's exponent was pointing it at work already
+done better. What a network is for is FINDING a candidate.
+
+So the run ends by not asking it for answers. It asks what rule the network
+behaves as if it had, solving for the constant in `fr + c * (ip - ip_to)`,
+and hands that to `propose_band_rule`:
+
+```
+the constant the network implies: 2
+
+band_shift_proposed_by_the_network: REFUSED
+    proposed shift dv + 2ip - 2ip_to
+    scaling forces  dv + 3ip - 3ip_to
+
+band_shift_to_uniform: ADMITTED -- the claimed exponent is what scaling
+    forces, so the rule is admitted and usable in a chain
+```
+
+That is the division of labour. The network noticed the **shape** — a
+constant times the gap between the indices, plus one per derivative — which
+is the part no decision procedure was going to suggest. It got the
+**constant** wrong, and the constant is exactly what rescaling settles.
+Neither half does the other's work.
 
 Three of the paper's derivations are not estimates at all, and all three
 are plain enough to carry out here rather than import. One is an identity,
@@ -1327,7 +1375,35 @@ state rather than a label. `run_census.py` prints this.
 | **CHAINING** (1) | a found path kept as one rule, then checked *as* a chain | `cycle_once` |
 | **DISCOVERY** (12) | instances validated against an oracle taking an independent route | `energy_budget_3_5`, `eq_4_1_exponents`, `lemma_4_5_cone`, `lemma_5_4_summation`, `lemma_7_4_pulse`, `lemma_A1_moments`, `lemma_A6_heat`, `lemma_10_3_borel`, `lemma_10_4_energy_bound`, `prop_9_6_decay`, `prop_9_6_table`, `prop_10_1_curl_order` |
 | **KNOWN** (144) | registered from outside: a named theorem, or a definition the construction makes | listed below by source |
+| **REFUTED** | a check contradicted it; trust and exactness both withdrawn | none in this library, by construction |
 | **DERIVED** (11) | imported as an untrusted label, then reached here from its predecessor by trusted rules only, and discharged | `thm_4_6_profiles`, `prop_5_5_background`, `prop_7_5_stress`, `prop_9_5_initialize`, `prop_9_6_induction`, `prop_9_9_summation`, `prop_10_1_localize`, `lemma_10_3_force`, `lemma_10_4_energy`, `lemma_10_5_unique`, `thm_1_1_blowup` |
+
+**Verification runs both ways.** For a long time it granted trust when a
+rule cleared its threshold and did nothing when a rule failed. That reads
+as conservative and is the opposite: most prior knowledge here is declared
+exact and is therefore trusted *on creation*, so a rule born trusted kept
+that standing after answering wrongly. The one event that should cost a
+rule everything cost it nothing. A contradicted rule now loses `trusted`,
+`exact` and any confidence its derivation carried, and records why.
+
+```
+bernstein_no_dimension: 0.5250 over 200 checks (152 distinct)
+  TRUST WITHDRAWN: contradicted on 95 of 200 checks. The rule is no longer
+  trusted or exact, and every chain through it is now untrusted.
+```
+
+The distinction that makes this safe is between *answering wrongly* and
+*declining*. Accuracy counts both as misses, which is right for accuracy
+and would be badly wrong as grounds for stripping a rule: a sound rule
+checked on a set it mostly declines would score near zero. So only cases
+where the rule committed to an answer count, and a narrow-but-correct rule
+keeps its standing with a line saying so.
+
+A rule that was PROVED or DERIVED and is then contradicted is louder than
+an ordinary failure and is not settled by flipping a flag. Either the
+decision procedure is wrong or the oracle is, and `refuted` says so in
+words and keeps the earlier claim beside it, so a reader sees the conflict
+rather than a rule that quietly changed its mind.
 
 **DERIVED is the fifth route and was the last one built.** For a long time
 these eleven stayed untrusted after being decomposed, and a test asserted

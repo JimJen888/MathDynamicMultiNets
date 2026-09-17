@@ -367,27 +367,24 @@ def oracle_kind(name: str) -> str:
     return ORACLES[name].kind
 
 
-@oracle(
-    "band_exponent_by_quadrature",
-    doc="The frequency exponent of a band estimate, measured rather than "
-        "computed. Builds a concrete bump concentrated at width 1/M, "
-        "integrates its norms numerically at several M, and fits the slope "
-        "in log M. This is a genuinely independent route to the same "
-        "answer: the rule does exponent arithmetic on a written-down "
-        "estimate, the oracle integrates a function on a grid and reads the "
-        "exponent off the measurement.",
-    kind="measured")
-def oracle_band_exponent_by_quadrature(ex: Example) -> Content | None:
-    from fractions import Fraction
+def _measure_band_exponent(ex: Example):
+    """The frequency exponent a band estimate picks up, MEASURED.
 
-    from .normcalc import est
+    Shared by the two band oracles, which differ only in what they write
+    down: the whole shifted estimate, or the exponent on its own. The
+    second exists because a learned rule emits symbols through a slot
+    codec whose vocabulary is digits and operators, so a target of
+    `est(d=2,...)` is outside it while `-3/2` is not.
+
+    Returns the exact rational shift, or None when the measurement does
+    not land near one.
+    """
+    from fractions import Fraction
 
     d = int(ex.meta["d"])
     dv = int(ex.meta["dv"])
     ip = Fraction(ex.meta["ip"])
     ip_to = Fraction(ex.meta["ip_to"])
-    fr = Fraction(ex.meta["fr"])
-    sc = Fraction(ex.meta["sc"])
 
     # u_M(x) = phi(M x), the extremiser for a band estimate: a bump whose
     # width is the reciprocal of its frequency. Its L^p norms are what
@@ -395,7 +392,6 @@ def oracle_band_exponent_by_quadrature(ex: Example) -> Content | None:
     span, points = 6.0, 4097
     x = np.linspace(-span, span, points)
     h = x[1] - x[0]
-    phi = np.exp(-x ** 2)
 
     def norm(values: np.ndarray, index: Fraction) -> float:
         """||v||_{L^p} in ONE dimension, with 1/p = index. The d-dimensional
@@ -439,4 +435,45 @@ def oracle_band_exponent_by_quadrature(ex: Example) -> Content | None:
         # labelled. Snapping anything at all would let the snap supply the
         # answer the oracle is supposed to supply.
         return None
-    return Content.abstract(est(d=d, dv=dv, ip=ip_to, fr=fr + snapped, sc=sc))
+    return snapped
+
+
+@oracle(
+    "band_exponent_value_by_quadrature",
+    doc="The frequency exponent a band estimate acquires, on its own, as "
+        "symbols a slot codec can emit. Same measurement as "
+        "`band_exponent_by_quadrature` and a different thing written down: "
+        "this is the label a LEARNED rule is trained against, since its "
+        "vocabulary is digits and operators and cannot spell a whole cell.",
+    kind="measured")
+def oracle_band_exponent_value_by_quadrature(ex: Example) -> Content | None:
+    from fractions import Fraction
+
+    shift = _measure_band_exponent(ex)
+    if shift is None:
+        return None
+    return Content.abstract(str(Fraction(ex.meta["fr"]) + shift))
+
+
+@oracle(
+    "band_exponent_by_quadrature",
+    doc="The frequency exponent of a band estimate, measured rather than "
+        "computed. Builds a concrete bump concentrated at width 1/M, "
+        "integrates its norms numerically at several M, and fits the slope "
+        "in log M. This is a genuinely independent route to the same "
+        "answer: the rule does exponent arithmetic on a written-down "
+        "estimate, the oracle integrates a function on a grid and reads the "
+        "exponent off the measurement.",
+    kind="measured")
+def oracle_band_exponent_by_quadrature(ex: Example) -> Content | None:
+    from fractions import Fraction
+
+    from .normcalc import est
+
+    shift = _measure_band_exponent(ex)
+    if shift is None:
+        return None
+    return Content.abstract(est(d=int(ex.meta["d"]), dv=int(ex.meta["dv"]),
+                                ip=Fraction(ex.meta["ip_to"]),
+                                fr=Fraction(ex.meta["fr"]) + shift,
+                                sc=Fraction(ex.meta["sc"])))

@@ -173,6 +173,11 @@ class Rule(ABC):
         #: was worth, so `discharge` records that here and `confidence`
         #: returns it.
         self.derived_confidence: float | None = None
+        #: Why this rule lost its standing, when a check contradicted it.
+        #: Set by `verify._withdraw` and never cleared by anything here: a
+        #: rule that has once answered wrongly has a history, and the next
+        #: passing check should not erase it silently.
+        self.refuted = ""
         # Classical facts this rule leans on but does not establish. Empty
         # for nearly everything here; the norm calculus in `normcalc` is
         # where it matters, because an exponent computed exactly on top of
@@ -994,7 +999,11 @@ class RuleLibrary:
             # "proved" and "trusted" are not the same standing and the table
             # should not print them the same. A trusted rule agreed with
             # something on a lot of instances; a proved one was decided.
-            flag = ("PROVED" if r.proved
+            # REFUTED comes first. A rule that was proved or derived and
+            # then contradicted would otherwise print its old standing,
+            # which is the one thing the table must not do.
+            flag = ("REFUTED" if r.refuted
+                    else "PROVED" if r.proved
                     else "DERIVED" if r.derived
                     else "trusted" if r.trusted
                     else f"NOT TRUSTED, {r.stats.summary()}")

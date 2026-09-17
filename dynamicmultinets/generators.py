@@ -426,14 +426,15 @@ def _triangle_scenes(n: int, rng: np.random.Generator,
         "point of the generator is that the instance space is a space of "
         "written-down estimates: discovery applies wherever concepts can be "
         "written down, and a norm space is one of those.",
-    params={"max_dim": "largest spatial dimension to draw",
+    params={"min_dim": "smallest spatial dimension to draw",
+            "max_dim": "largest spatial dimension to draw",
             "max_derivatives": "largest derivative count to draw",
             "ip_to": "the integrability index the rule under test moves to, "
                      "as a string like '0' or '1/2'; instances are drawn "
                      "only where that rule's own guard admits them"})
 def gen_norm_band_estimates(n: int, rng, max_dim: int = 2,
                             max_derivatives: int = 2,
-                            ip_to: str = "0") -> list[Example]:
+                            ip_to: str = "0", min_dim: int = 1) -> list[Example]:
     from fractions import Fraction
 
     from .normcalc import est
@@ -451,7 +452,7 @@ def gen_norm_band_estimates(n: int, rng, max_dim: int = 2,
         raise ValueError(f"no integrability index above {target}")
     out: list[Example] = []
     for _ in range(n):
-        d = int(rng.integers(1, max_dim + 1))
+        d = int(rng.integers(min_dim, max_dim + 1))
         dv = int(rng.integers(0, max_derivatives + 1))
         ip = grid[int(rng.integers(0, len(grid)))]
         fr = Fraction(int(rng.integers(-4, 1)))

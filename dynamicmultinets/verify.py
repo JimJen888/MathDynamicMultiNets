@@ -296,6 +296,15 @@ class VerificationReport:
     counterexamples: list[str] = field(default_factory=list)
     threshold: float = 0.99
     became_trusted: bool = False
+    #: Set when this check TOOK a rule's standing away. The counterpart to
+    #: `became_trusted`, and it was missing for a long time: verification
+    #: granted trust and never withdrew it, so a rule that was trusted on
+    #: creation kept that standing after contradicting its oracle.
+    lost_trust: bool = False
+    #: Cases where the rule committed to an answer and the oracle
+    #: disagreed, as opposed to cases where it declined. Only these are
+    #: grounds for withdrawing standing; see `_check`.
+    n_contradicted: int = 0
     independence: "Independence | None" = None
     diagnosis: str = ""                     # why nothing was checked, measured
     #: How many of the `n_checked` checks asked a question no other check in
@@ -306,6 +315,18 @@ class VerificationReport:
     @property
     def accuracy(self) -> float:
         return self.n_correct / self.n_checked if self.n_checked else 0.0
+
+    @property
+    def refuted(self) -> bool:
+        """Did the rule commit to answers the oracle contradicts?
+
+        Two conditions, and both are needed. There must be cases the rule
+        ANSWERED wrongly, so that declining an instance it was never meant
+        to handle cannot cost it anything. And it must miss the threshold,
+        so that a rule which clears the bar with a handful of misses is
+        not stripped for them.
+        """
+        return self.n_contradicted > 0 and self.accuracy < self.threshold
 
     @property
     def confirmed(self) -> bool:
@@ -358,8 +379,22 @@ class VerificationReport:
             head += f"\n  NOT independent: {self.independence.why_not()}"
         if self.counterexamples:
             head += "\n  counterexamples: " + "; ".join(self.counterexamples[:5])
-        head += f"\n  {'TRUSTED' if self.became_trusted else 'not trusted'} " \
-                f"(threshold {self.threshold})"
+        if self.lost_trust:
+            # Loud, and distinguished from an ordinary failure. A rule that
+            # merely declined everything has not been contradicted; this one
+            # committed to answers that are wrong.
+            head += (f"\n  TRUST WITHDRAWN: contradicted on "
+                     f"{self.n_contradicted} of {self.n_checked} checks. The "
+                     f"rule is no longer trusted or exact, and every chain "
+                     f"through it is now untrusted.")
+        else:
+            head += f"\n  {'TRUSTED' if self.became_trusted else 'not trusted'} " \
+                    f"(threshold {self.threshold})"
+            if self.n_contradicted == 0 and self.accuracy < self.threshold:
+                head += ("\n  Standing is unchanged: the rule DECLINED the "
+                         "checks it missed rather than answering them wrongly, "
+                         "which says the instances are outside its guard "
+                         "rather than that the rule is.")
         return head
 
 
@@ -414,8 +449,23 @@ def why_nothing_ran(rule: Rule, examples: Sequence[Example],
     return "\n  ".join(rows)
 
 
-def _check(rule: Rule, examples: Sequence[Example]) -> tuple[int, int, list[str]]:
-    n = correct = 0
+def _check(rule: Rule, examples: Sequence[Example]
+           ) -> tuple[int, int, list[str], int]:
+    """How the rule did, and how it FAILED when it failed.
+
+    The fourth number is the one that matters for standing. A rule can
+    miss a check two ways and they are not the same kind of event: it can
+    ANSWER and be wrong, which contradicts the rule, or it can DECLINE,
+    which says the instance is outside its guard and says nothing about
+    whether the rule is right. Accuracy has always counted both as wrong,
+    which is correct for accuracy and would be badly wrong as grounds for
+    taking a rule's standing away -- a rule checked on a set it mostly
+    declines would score near zero while being perfectly sound.
+
+    So `n_contradicted` counts only the cases where the rule committed to
+    an answer and the oracle disagreed.
+    """
+    n = correct = contradicted = 0
     bad: list[str] = []
     for ex in examples:
         if not ex.labeled:
@@ -425,9 +475,12 @@ def _check(rule: Rule, examples: Sequence[Example]) -> tuple[int, int, list[str]
         want = normalize(answer_text(ex.out))
         if got is not None and normalize(answer_text(got)) == want:
             correct += 1
-        elif len(bad) < 32:
+            continue
+        if got is not None:
+            contradicted += 1
+        if len(bad) < 32:
             bad.append(f"{ex.inp.text!r} -> {answer_text(got)!r} (want {want!r})")
-    return n, correct, bad
+    return n, correct, bad, contradicted
 
 
 def _instance_key(c: Content) -> str:
@@ -531,6 +584,52 @@ def prove_rule(library: RuleLibrary, rule_name: str, prover_name: str,
     return report
 
 
+def _withdraw(rule: Rule, report: "VerificationReport", source: str) -> None:
+    """Take a rule's standing away, because a check contradicted it.
+
+    Verification used to be one-directional: it granted trust when a rule
+    cleared its threshold and did nothing when a rule failed. That reads as
+    conservative and is the opposite. A rule that is trusted ON CREATION --
+    every `PythonRule` declared exact, which is most of the prior knowledge
+    here -- kept that standing after answering wrongly, so the one event
+    that should cost a rule everything cost it nothing.
+
+    Three flags come off together, because they are three ways of saying
+    the same thing and leaving any of them set would misreport:
+
+      `trusted`  the rule may appear in a proof. It may not.
+      `exact`    the rule cannot be wrong. It has just been wrong.
+      `derived_confidence`  what a derivation was worth. A derivation of
+                 something false is worth nothing, and leaving it would
+                 have the rule report a high confidence after refutation.
+
+    A rule that was PROVED or DERIVED and is then contradicted is a louder
+    event than an ordinary failure, and it is not resolved by flipping a
+    flag: either the decision procedure is wrong, or the oracle is, or they
+    are not talking about the same thing. `refuted` says so in words and
+    keeps the earlier claim alongside rather than erasing it, so whoever
+    reads the rule sees the conflict instead of a rule that quietly
+    changed its mind.
+    """
+    rule.trusted = False
+    rule.exact = False
+    rule.derived_confidence = None
+    was = ""
+    if getattr(rule, "proved", ""):
+        was = (f"  CONFLICT: this rule was PROVED on its whole domain "
+               f"({rule.proved}). A decision procedure and a measurement "
+               f"cannot both be right here.")
+    elif getattr(rule, "derived", ""):
+        was = (f"  CONFLICT: this rule was DERIVED ({rule.derived}). Either "
+               f"a step of that derivation is wrong or the oracle is.")
+    example = report.counterexamples[0] if report.counterexamples else ""
+    rule.refuted = (
+        f"contradicted by {source} on {report.n_contradicted} of "
+        f"{report.n_checked} checks (accuracy {report.accuracy:.4f} against "
+        f"a threshold of {report.threshold}): {example}{was}")
+    report.lost_trust = True
+
+
 def verify_rule(
     library: RuleLibrary,
     rule_name: str,
@@ -553,7 +652,7 @@ def verify_rule(
     if relabel or not example_set.labeled:
         label(example_set, oracle_name)
 
-    n, correct, bad = _check(rule, example_set.examples)
+    n, correct, bad, contradicted = _check(rule, example_set.examples)
     diagnosis = ""
     if not n:
         labelled = sum(1 for ex in example_set.examples if ex.labeled)
@@ -569,13 +668,15 @@ def verify_rule(
         rule=rule_name, n_checked=n, n_correct=correct,
         grounding=ORACLES[oracle_name].kind, source=oracle_name,
         counterexamples=bad, threshold=threshold, diagnosis=diagnosis,
-        n_distinct=n_distinct,
+        n_distinct=n_distinct, n_contradicted=contradicted,
     )
     # Charged for the distinct questions, not the repeats: see `_distinct_check`.
     rule.stats.merge(n_distinct, correct_distinct, oracle_name, bad)
     if n and report.accuracy >= threshold:
         rule.trusted = True
         report.became_trusted = True
+    elif report.refuted:
+        _withdraw(rule, report, oracle_name)
     return report
 
 
@@ -653,7 +754,7 @@ def verify_against_rules(
                f"have been fine on its own.)" if exact_shared else "")
         )
 
-    n = correct = 0
+    n = correct = contradicted = 0
     bad: list[str] = []
     ref_answers: list[str] = []
     # Same distinct-instance accounting as `verify_rule`: repeats are not
@@ -672,9 +773,14 @@ def verify_against_rules(
         seen[key] = ok if key not in seen else (seen[key] and ok)
         if ok:
             correct += 1
-        elif len(bad) < 32:
-            bad.append(f"{ex.inp.text!r} -> {answer_text(got)!r} "
-                       f"(reference {answer_text(want)!r})")
+        else:
+            # Answering wrongly contradicts the rule; declining does not.
+            # See `_check`.
+            if got is not None:
+                contradicted += 1
+            if len(bad) < 32:
+                bad.append(f"{ex.inp.text!r} -> {answer_text(got)!r} "
+                           f"(reference {answer_text(want)!r})")
     n_distinct = len(seen)
     correct_distinct = sum(1 for v in seen.values() if v)
 
@@ -701,11 +807,14 @@ def verify_against_rules(
         threshold=(independent_threshold if indep.independent
                    and independent_threshold is not None else threshold),
         independence=indep, diagnosis=diagnosis, n_distinct=n_distinct,
+        n_contradicted=contradicted,
     )
     rule.stats.merge(n_distinct, correct_distinct, reference.name, bad)
     if n and report.accuracy >= report.threshold:
         rule.trusted = True
         report.became_trusted = True
+    elif report.refuted:
+        _withdraw(rule, report, reference.name)
     return report
 
 
